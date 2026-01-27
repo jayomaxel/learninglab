@@ -1,0 +1,7 @@
+{
+  "name": "LinguistFlow AI",
+  "description": "A high-end language learning platform featuring an AI-powered Listening Lab for dictation and an RSVP Speed Reader with contextual AI explanations.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
