@@ -1,10 +1,10 @@
 
 import React from 'react';
-import { Language } from '../types';
+import { Language, AppState } from '../types';
 
 interface HeaderProps {
-  currentTab: 'LISTENING' | 'READER' | 'VOCAB';
-  onTabChange: (tab: 'LISTENING' | 'READER' | 'VOCAB') => void;
+  currentTab: AppState['currentTab'];
+  onTabChange: (tab: AppState['currentTab']) => void;
   language: Language;
   onLanguageChange: (lang: Language) => void;
   onOpenSettings: () => void;
@@ -31,10 +31,10 @@ const Header: React.FC<HeaderProps> = ({
           </h1>
         </div>
 
-        <nav className="flex items-center bg-slate-100 p-1 rounded-xl">
+        <nav className="flex items-center bg-slate-100 p-1 rounded-xl overflow-x-auto">
           <button
             onClick={() => onTabChange('LISTENING')}
-            className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-[12px] sm:text-sm font-bold transition-all ${
+            className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-[12px] sm:text-sm font-bold transition-all whitespace-nowrap ${
               currentTab === 'LISTENING' ? 'bg-green-400 text-white' : 'text-slate-500 hover:text-slate-800 hover:bg-white'
             }`}
           >
@@ -42,7 +42,7 @@ const Header: React.FC<HeaderProps> = ({
           </button>
           <button
             onClick={() => onTabChange('READER')}
-            className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-[12px] sm:text-sm font-bold transition-all ${
+            className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-[12px] sm:text-sm font-bold transition-all whitespace-nowrap ${
               currentTab === 'READER' ? 'bg-green-400 text-white' : 'text-slate-500 hover:text-slate-800 hover:bg-white'
             }`}
           >
@@ -50,11 +50,19 @@ const Header: React.FC<HeaderProps> = ({
           </button>
           <button
             onClick={() => onTabChange('VOCAB')}
-            className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-[12px] sm:text-sm font-bold transition-all ${
+            className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-[12px] sm:text-sm font-bold transition-all whitespace-nowrap ${
               currentTab === 'VOCAB' ? 'bg-green-400 text-white' : 'text-slate-500 hover:text-slate-800 hover:bg-white'
             }`}
           >
             生词本
+          </button>
+          <button
+            onClick={() => onTabChange('STATS')}
+            className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-[12px] sm:text-sm font-bold transition-all whitespace-nowrap ${
+              currentTab === 'STATS' ? 'bg-green-400 text-white' : 'text-slate-500 hover:text-slate-800 hover:bg-white'
+            }`}
+          >
+            看板
           </button>
         </nav>
 
