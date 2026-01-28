@@ -3,15 +3,57 @@ import React, { useState, useEffect } from 'react';
 import Header from './components/Header';
 import ListeningLab from './components/ListeningLab';
 import SpeedReader from './components/SpeedReader';
+import VocabularyBank from './components/VocabularyBank';
 import SettingsModal from './components/SettingsModal';
 import KeyboardShortcuts from './components/KeyboardShortcuts';
-import { Language } from './types';
+import { Language, VocabularyItem } from './types';
 
 const App: React.FC = () => {
-  const [currentTab, setCurrentTab] = useState<'LISTENING' | 'READER'>('LISTENING');
+  const [currentTab, setCurrentTab] = useState<'LISTENING' | 'READER' | 'VOCAB'>('LISTENING');
   const [language, setLanguage] = useState<Language>('EN');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  
+  // Load initial vocab from local storage
+  const [vocabulary, setVocabulary] = useState<VocabularyItem[]>(() => {
+    const saved = localStorage.getItem('linguistflow_vocab');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  // Persist vocab changes
+  useEffect(() => {
+    localStorage.setItem('linguistflow_vocab', JSON.stringify(vocabulary));
+  }, [vocabulary]);
+
+  const handleAddWord = (word: string, contextSentence: string) => {
+    // Only strip punctuation from the start and end of the word.
+    // Preserves internal apostrophes (don't, l'ami) or hyphens.
+    const cleanWord = word.replace(/^[.,!?;:()"'«»\s]+|[.,!?;:()"'«»\s]+$/g, '');
+    
+    if (!cleanWord) return;
+    
+    // Avoid duplicates based on word + context (loose check)
+    const exists = vocabulary.some(v => v.word.toLowerCase() === cleanWord.toLowerCase());
+    
+    if (exists) {
+        alert(`"${cleanWord}" 已经在您的生词本中了。`);
+        return;
+    }
+
+    const newItem: VocabularyItem = {
+      // Use timestamp + random string to ensure uniqueness
+      id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+      word: cleanWord,
+      contextSentence: contextSentence,
+      timestamp: Date.now(),
+    };
+
+    setVocabulary(prev => [newItem, ...prev]);
+  };
+
+  const handleRemoveWord = (id: string) => {
+    setVocabulary(prev => prev.filter(item => item.id !== id));
+  };
 
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -20,10 +62,14 @@ const App: React.FC = () => {
       if (e.ctrlKey && e.key === '2') setLanguage('FR');
       if (e.ctrlKey && e.key === '3') setLanguage('KR');
       
-      // Ctrl + T 切换标签
+      // Ctrl + T 切换标签 (Rotate)
       if (e.ctrlKey && e.key.toLowerCase() === 't') {
         e.preventDefault();
-        setCurrentTab(prev => prev === 'LISTENING' ? 'READER' : 'LISTENING');
+        setCurrentTab(prev => {
+            if (prev === 'LISTENING') return 'READER';
+            if (prev === 'READER') return 'VOCAB';
+            return 'LISTENING';
+        });
       }
 
       // / 键显示快捷键帮助 (非输入状态)
@@ -50,12 +96,14 @@ const App: React.FC = () => {
         <div className="mb-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="text-center sm:text-left">
             <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight mb-2">
-              {currentTab === 'LISTENING' ? '听力实验室' : '极速阅读'}
+              {currentTab === 'LISTENING' ? '听力实验室' : currentTab === 'READER' ? '极速阅读' : '语境生词本'}
             </h2>
             <p className="text-slate-500 text-sm sm:text-base font-medium">
               {currentTab === 'LISTENING' 
-                ? '通过主动听写和 AI 分析掌握地道发音。' 
-                : '利用 RSVP 技术提升阅读速度和理解力。'}
+                ? '通过主动听写和精准断句掌握地道发音。' 
+                : currentTab === 'READER' 
+                ? '利用 RSVP 技术提升阅读速度和理解力。'
+                : '基于上下文的单词回顾与闪卡记忆。'}
             </p>
           </div>
           <button 
@@ -67,10 +115,17 @@ const App: React.FC = () => {
           </button>
         </div>
 
-        {currentTab === 'LISTENING' ? (
-          <ListeningLab language={language} />
-        ) : (
-          <SpeedReader language={language} />
+        {/* Use hidden styles instead of conditional rendering to persist state when switching tabs */}
+        <div style={{ display: currentTab === 'LISTENING' ? 'block' : 'none' }}>
+          <ListeningLab language={language} onSaveWord={handleAddWord} />
+        </div>
+        
+        <div style={{ display: currentTab === 'READER' ? 'block' : 'none' }}>
+          <SpeedReader language={language} onSaveWord={handleAddWord} />
+        </div>
+
+        {currentTab === 'VOCAB' && (
+          <VocabularyBank items={vocabulary} onRemove={handleRemoveWord} />
         )}
       </main>
       
@@ -89,5 +144,4 @@ const App: React.FC = () => {
   );
 };
 
-// Fix: Add missing default export to satisfy index.tsx import
 export default App;

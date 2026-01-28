@@ -8,7 +8,15 @@ export interface TranscriptionSegment {
   translation: string;
 }
 
+export interface VocabularyItem {
+  id: string;
+  word: string;
+  contextSentence: string;
+  translation?: string; // Optional user note or segment translation
+  timestamp: number;
+}
+
 export interface AppState {
-  currentTab: 'LISTENING' | 'READER';
+  currentTab: 'LISTENING' | 'READER' | 'VOCAB';
   language: Language;
 }

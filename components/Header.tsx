@@ -3,8 +3,8 @@ import React from 'react';
 import { Language } from '../types';
 
 interface HeaderProps {
-  currentTab: 'LISTENING' | 'READER';
-  onTabChange: (tab: 'LISTENING' | 'READER') => void;
+  currentTab: 'LISTENING' | 'READER' | 'VOCAB';
+  onTabChange: (tab: 'LISTENING' | 'READER' | 'VOCAB') => void;
   language: Language;
   onLanguageChange: (lang: Language) => void;
   onOpenSettings: () => void;
@@ -38,7 +38,7 @@ const Header: React.FC<HeaderProps> = ({
               currentTab === 'LISTENING' ? 'bg-green-400 text-white' : 'text-slate-500 hover:text-slate-800 hover:bg-white'
             }`}
           >
-            听力实验室
+            听力
           </button>
           <button
             onClick={() => onTabChange('READER')}
@@ -46,7 +46,15 @@ const Header: React.FC<HeaderProps> = ({
               currentTab === 'READER' ? 'bg-green-400 text-white' : 'text-slate-500 hover:text-slate-800 hover:bg-white'
             }`}
           >
-            极速阅读
+            阅读
+          </button>
+          <button
+            onClick={() => onTabChange('VOCAB')}
+            className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-[12px] sm:text-sm font-bold transition-all ${
+              currentTab === 'VOCAB' ? 'bg-green-400 text-white' : 'text-slate-500 hover:text-slate-800 hover:bg-white'
+            }`}
+          >
+            生词本
           </button>
         </nav>
 

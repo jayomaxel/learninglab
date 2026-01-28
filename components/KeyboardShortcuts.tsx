@@ -23,6 +23,15 @@ const KeyboardShortcuts: React.FC<KeyboardShortcutsProps> = ({ onClose }) => {
         { key: 'Ctrl + →', desc: '跳过当前片段' },
         { key: 'Esc', desc: '显示/隐藏原文' },
       ]
+    },
+    {
+      title: '极速阅读',
+      keys: [
+        { key: 'Space', desc: '开始/暂停 播放' },
+        { key: 'Ctrl + ↑/↓', desc: '调整 WPM 速度' },
+        { key: 'Ctrl + Backspace', desc: '重置阅读器' },
+        { key: 'Esc', desc: '全文翻译' },
+      ]
     }
   ];
 

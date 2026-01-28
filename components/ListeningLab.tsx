@@ -1,15 +1,15 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Language, TranscriptionSegment } from '../types';
-import { transcribeMedia, generateAIPractice, generatePracticeFromUrl } from '../services/gemini';
+import { generateAIPractice, generatePracticeFromUrl } from '../services/gemini';
+import { readTextFile, parseSubtitle } from '../services/fileParser';
 
 interface ListeningLabProps {
   language: Language;
+  onSaveWord: (word: string, context: string) => void;
 }
 
-const FRENCH_ACCENTS = ['é', 'è', 'ê', 'ë', 'à', 'â', 'î', 'ï', 'ô', 'û', 'ù', 'ç'];
-
-const ListeningLab: React.FC<ListeningLabProps> = ({ language }) => {
+const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord }) => {
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [segments, setSegments] = useState<TranscriptionSegment[]>([]);
   const [loading, setLoading] = useState(false);
@@ -20,7 +20,6 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language }) => {
   const [inputMode, setInputMode] = useState<'PROMPT' | 'URL'>('PROMPT');
   const [isFullPlaying, setIsFullPlaying] = useState(false);
   
-  // 使用 Ref 实时追踪全文播放状态，避免在回调中读取旧的 state
   const isFullPlayingRef = useRef(false);
   const currentSegmentRef = useRef<TranscriptionSegment | null>(null);
 
@@ -30,6 +29,8 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const rafRef = useRef<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const subInputRef = useRef<HTMLInputElement>(null);
 
   const currentSegment = segments[currentIndex];
 
@@ -59,8 +60,12 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language }) => {
       setIsFullPlaying(false);
       isFullPlayingRef.current = false;
       videoRef.current.pause();
-      videoRef.current.currentTime = currentSegment.start;
-      videoRef.current.play();
+      requestAnimationFrame(() => {
+         if (videoRef.current) {
+             videoRef.current.currentTime = currentSegment.start;
+             videoRef.current.play().catch(() => {});
+         }
+      });
     }
   }, [currentSegment]);
 
@@ -69,17 +74,15 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language }) => {
       setIsFullPlaying(true);
       isFullPlayingRef.current = true;
       videoRef.current.currentTime = 0;
-      videoRef.current.play();
+      videoRef.current.play().catch(() => {});
     }
   }, []);
 
-  // 核心监听逻辑：使用 requestAnimationFrame 确保在每一帧都进行起止时间检测
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
     const checkTime = () => {
-      // 如果开启了全文模式，不执行暂停逻辑
       if (isFullPlayingRef.current) {
         rafRef.current = requestAnimationFrame(checkTime);
         return;
@@ -89,7 +92,6 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language }) => {
       if (seg && video.currentTime >= seg.end) {
         video.pause();
         video.currentTime = seg.end;
-        // 自动聚焦第一个未对的框
         const firstPending = wordResults.findIndex(r => r !== 'correct');
         if (firstPending !== -1) {
           inputRefs.current[firstPending]?.focus();
@@ -113,7 +115,6 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language }) => {
     video.addEventListener('play', handlePlay);
     video.addEventListener('pause', handlePause);
 
-    // 如果当前已经是播放状态，且不是全文模式，直接开始检测
     if (!video.paused && !isFullPlayingRef.current) {
       rafRef.current = requestAnimationFrame(checkTime);
     }
@@ -123,7 +124,7 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language }) => {
       video.removeEventListener('pause', handlePause);
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [segments, wordResults]); // 只有在素材改变或结果改变时重置，不依赖 isFullPlaying 以防闭包旧值
+  }, [segments, wordResults]); 
 
   const resetState = () => {
     setCurrentIndex(0);
@@ -185,23 +186,40 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language }) => {
         resetState();
       }
     } catch (err) {
+      console.error(err);
       alert("AI 生成失败，请重试。");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleMediaUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setMediaUrl(URL.createObjectURL(file));
+      setSegments([]); 
+      resetState();
+    }
+  };
+
+  const handleSubtitleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
       setLoading(true);
-      transcribeMedia(file, language)
-        .then(data => {
-          setSegments(data);
+      try {
+        const text = await readTextFile(file);
+        const parsedSegments = parseSubtitle(text);
+        if (parsedSegments.length > 0) {
+          setSegments(parsedSegments);
           resetState();
-        })
-        .finally(() => setLoading(false));
+        } else {
+          alert("未能解析字幕文件，请确保格式为 SRT 或 VTT。");
+        }
+      } catch (err) {
+        alert("读取字幕文件失败。");
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -226,7 +244,8 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language }) => {
           <div className="flex gap-2">
              <button 
                onClick={playFullAudio} 
-               className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 border ${isFullPlaying ? 'bg-green-400 text-white border-transparent' : 'bg-slate-900 text-white border-transparent hover:bg-slate-800'}`}
+               disabled={!mediaUrl}
+               className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 border ${isFullPlaying ? 'bg-green-400 text-white border-transparent' : 'bg-slate-900 text-white border-transparent hover:bg-slate-800 disabled:opacity-50'}`}
              >
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M4.5 3a.5.5 0 00-.5.5v13a.5.5 0 00.81.39l8-6.5a.5.5 0 000-.78l-8-6.5A.5.5 0 004.5 3z"/></svg>
                 播放完整全文
@@ -263,13 +282,58 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language }) => {
                 controls={isFullPlaying}
               />
             ) : (
-              <div className="text-center p-8 bg-white w-full h-full flex flex-col items-center justify-center">
-                <input type="file" accept="video/*,audio/*" onChange={handleFileUpload} className="hidden" id="file-upload" />
-                <label htmlFor="file-upload" className="px-10 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-full text-sm font-bold cursor-pointer transition-all border border-slate-200">
-                  导入本地素材
-                </label>
+              <div className="text-center p-8 bg-white w-full h-full flex flex-col items-center justify-center space-y-4">
+                <div className="p-4 bg-green-50 rounded-full">
+                  <svg className="w-8 h-8 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                </div>
+                <h3 className="text-lg font-bold text-slate-700">导入本地素材</h3>
+                <p className="text-xs text-slate-400 max-w-xs">首先上传音频/视频文件，然后上传对应的 SRT/VTT 字幕文件以启用听写练习。</p>
+                <div className="flex gap-2">
+                   <button 
+                     onClick={() => fileInputRef.current?.click()}
+                     className="px-6 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-all border border-slate-200"
+                   >
+                     选择媒体文件
+                   </button>
+                </div>
               </div>
             )}
+            <input 
+              type="file" 
+              accept="video/*,audio/*" 
+              onChange={handleMediaUpload} 
+              className="hidden" 
+              ref={fileInputRef} 
+            />
+            <input 
+              type="file" 
+              accept=".srt,.vtt" 
+              onChange={handleSubtitleUpload} 
+              className="hidden" 
+              ref={subInputRef} 
+            />
+          </div>
+
+          <div className="flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-200">
+             <div className="flex items-center gap-3">
+               <button 
+                 onClick={() => fileInputRef.current?.click()}
+                 className="px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg text-xs font-bold border border-slate-200 transition-all"
+               >
+                 {mediaUrl ? '更换媒体' : '上传媒体'}
+               </button>
+               <button 
+                 onClick={() => subInputRef.current?.click()}
+                 className="px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg text-xs font-bold border border-slate-200 transition-all"
+               >
+                 {segments.length > 0 ? `更换字幕 (${segments.length}条)` : '上传字幕 (SRT/VTT)'}
+               </button>
+             </div>
+             {segments.length > 0 && (
+                <span className="text-xs font-bold text-green-600 bg-green-50 px-3 py-1 rounded-full">
+                  已加载字幕
+                </span>
+             )}
           </div>
 
           {currentSegment && (
@@ -281,8 +345,26 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language }) => {
                    {showHint ? "隐藏原文" : "显示原文 (Esc)"}
                  </button>
               </div>
-              <p className="text-lg text-slate-700 font-bold mb-2 leading-relaxed">{currentSegment.translation}</p>
-              {showHint && <p className="text-sm text-slate-400 italic font-mono bg-slate-50 p-3 rounded-xl mt-2 border border-slate-100">{currentSegment.text}</p>}
+              <p className="text-lg text-slate-700 font-bold mb-2 leading-relaxed">
+                {currentSegment.translation || '（暂无翻译）'}
+              </p>
+              {showHint && (
+                <div className="bg-slate-50 p-3 rounded-xl mt-2 border border-slate-100">
+                   <p className="text-sm text-slate-400 italic font-mono mb-2">
+                     {segmentWords.map((word, i) => (
+                       <span 
+                         key={i} 
+                         onClick={() => onSaveWord(word, currentSegment.text)}
+                         className="hover:text-green-600 hover:bg-green-100 cursor-pointer rounded px-0.5 transition-all"
+                         title="点击添加到生词本"
+                       >
+                         {word}{' '}
+                       </span>
+                     ))}
+                   </p>
+                   <p className="text-[10px] text-slate-300 text-right">点击单词可加入生词本</p>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -308,8 +390,10 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language }) => {
                         value={wordInputs[idx] || ''}
                         onChange={(e) => handleWordChange(idx, e.target.value)}
                         placeholder=""
+                        // Use ch units for better fit. Base 2ch + 1ch per letter.
+                        style={{ width: `${Math.max(3, word.length + 1)}ch` }}
                         className={`
-                          w-20 sm:w-24 text-center py-2.5 px-1 text-lg font-mono font-bold rounded-xl border-2 transition-all outline-none
+                          text-center py-2.5 px-1 text-lg font-mono font-bold rounded-xl border-2 transition-all outline-none
                           ${wordResults[idx] === 'correct' ? 'bg-green-50 border-green-400 text-green-700' : 
                             wordResults[idx] === 'wrong' ? 'bg-red-50 border-red-400 text-red-700' : 
                             'bg-slate-50 border-slate-100 focus:border-green-300 focus:bg-white'}
@@ -348,8 +432,10 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language }) => {
               <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4 text-slate-300">
                  <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
               </div>
-              <p className="text-slate-400 font-bold leading-relaxed max-w-xs">
-                听力实验室已切换为毫秒级断句模式。<br/>点击“生成实验室”开始练习。
+              <p className="text-slate-400 font-bold leading-relaxed max-w-xs mb-4">
+                {mediaUrl 
+                  ? "已加载媒体文件。<br/>请点击左侧“上传字幕”以开始练习。" 
+                  : "听力实验室已切换为精准断句模式。<br/>点击“生成实验室”或上传本地文件。"}
               </p>
             </div>
           )}
