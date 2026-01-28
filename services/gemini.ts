@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type, Modality } from "@google/genai";
 import { TranscriptionSegment, Language, DifficultyAnalysis } from "../types";
 
@@ -155,12 +154,30 @@ export const generatePracticeFromUrl = async (url: string, language: Language) =
   return await generateAIPractice(fetchResp.text || "", language);
 };
 
-export const fetchReadingMaterial = async (input: string, language: Language) => {
+export const fetchReadingMaterial = async (input: string, language: Language): Promise<{ text: string, sources: string[] }> => {
   const ai = getAI();
   const model = 'gemini-3-pro-preview';
   const prompt = `为主题 "${input}" 生成 ${language} 极速阅读文章。仅返回原文。`;
-  const response = await ai.models.generateContent({ model, contents: prompt, config: { tools: [{ googleSearch: {} }] } });
-  return response.text || "";
+  const response = await ai.models.generateContent({ 
+      model, 
+      contents: prompt, 
+      config: { tools: [{ googleSearch: {} }] } 
+  });
+
+  // Extract sources from grounding metadata as per API requirements
+  const sources: string[] = [];
+  if (response.candidates?.[0]?.groundingMetadata?.groundingChunks) {
+      response.candidates[0].groundingMetadata.groundingChunks.forEach(chunk => {
+          if (chunk.web?.uri) {
+              sources.push(chunk.web.uri);
+          }
+      });
+  }
+
+  return { 
+      text: response.text || "", 
+      sources: Array.from(new Set(sources)) // Deduplicate
+  };
 };
 
 export const translateText = async (text: string): Promise<string> => {

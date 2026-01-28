@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Header from './components/Header';
 import ListeningLab from './components/ListeningLab';
 import SpeedReader from './components/SpeedReader';
@@ -7,7 +7,7 @@ import VocabularyBank from './components/VocabularyBank';
 import Dashboard from './components/Dashboard';
 import SettingsModal from './components/SettingsModal';
 import KeyboardShortcuts from './components/KeyboardShortcuts';
-import { Language, VocabularyItem, DictionaryEntry, AppState } from './types';
+import { Language, VocabularyItem, AppState } from './types';
 import { db } from './services/db';
 import { getLemmaCandidates } from './services/linguistics';
 import { defineWord } from './services/gemini';
@@ -22,125 +22,134 @@ const App: React.FC = () => {
   // Review Mode State
   const [isReviewMode, setIsReviewMode] = useState(false);
   
-  // Load initial vocab from local storage
+  // Level 1: Memory (User's Vocabulary)
   const [vocabulary, setVocabulary] = useState<VocabularyItem[]>(() => {
     const saved = localStorage.getItem('linguistflow_vocab');
     return saved ? JSON.parse(saved) : [];
   });
-
-  const [dictCount, setDictCount] = useState<number>(0);
-  const dictCacheRef = useRef<Map<string, string>>(new Map());
+  
+  // Known words set
   const [knownWords, setKnownWords] = useState<Set<string>>(new Set());
 
+  const loadKnownWords = useCallback(async () => {
+        const userWords = new Set(vocabulary.filter(v => v.language === language).map(v => v.word.toLowerCase()));
+        setKnownWords(userWords);
+  }, [language, vocabulary]);
+
   useEffect(() => {
-    const init = async () => {
-        await db.init();
-        const count = await db.count(language);
-        setDictCount(count);
-        
-        if (count > 0) {
-            console.time('LoadDictCache');
-            const cache = await db.getCache(language);
-            dictCacheRef.current = cache;
-            setKnownWords(new Set(cache.keys()));
-            console.timeEnd('LoadDictCache');
-        } else {
-            dictCacheRef.current = new Map();
-            setKnownWords(new Set());
-        }
-    };
-    init();
-  }, [language]);
+    loadKnownWords();
+  }, [loadKnownWords]);
 
   useEffect(() => {
     localStorage.setItem('linguistflow_vocab', JSON.stringify(vocabulary));
   }, [vocabulary]);
 
-  const handleImportDictionary = async (entries: DictionaryEntry[], onProgress: (p: number) => void) => {
-    await db.importBatch(entries, language, onProgress);
-    const count = await db.count(language);
-    setDictCount(count);
-    const cache = await db.getCache(language);
-    dictCacheRef.current = cache;
-    setKnownWords(new Set(cache.keys()));
-  };
-
-  const handleClearDictionary = async () => {
-      if (confirm(`确定要清空 ${language} 的本地词库吗？`)) {
-          await db.clear(language);
-          setDictCount(0);
-          dictCacheRef.current = new Map();
-          setKnownWords(new Set());
-      }
-  };
-
+  // THE WATERFALL: Memory -> Hub (Priority) -> AI
   const handleAddWord = async (word: string, contextSentence: string) => {
     const cleanWord = word.replace(/^[.,!?;:()"'«»\s]+|[.,!?;:()"'«»\s]+$/g, '');
     if (!cleanWord) return;
     
-    // French Unification: Try to find lemma in dictionary first
-    // If lemma exists, we could theoretically map this word to the lemma.
-    // For this simple implementation, we just check existence.
-    const candidates = getLemmaCandidates(cleanWord, language);
-    const cache = dictCacheRef.current;
-    
-    let targetWord = cleanWord;
-    let localTranslation: string | null = null;
-    
-    for (const candidate of candidates) {
-        if (cache.has(candidate)) {
-            const definition = cache.get(candidate);
-            if (candidate.toLowerCase() !== cleanWord.toLowerCase()) {
-                localTranslation = `[${candidate}] ${definition}`;
-                // Optional: Store under lemma? For now store original but show lemma info.
-            } else {
-                localTranslation = definition || null;
-            }
-            break;
-        }
-    }
-    
-    const exists = vocabulary.some(v => v.word.toLowerCase() === targetWord.toLowerCase());
-    if (exists) {
-        // Optional: Alert or just shake UI
-        return;
-    }
+    // Level 1: Already in User List?
+    const exists = vocabulary.some(v => 
+        v.word.toLowerCase() === cleanWord.toLowerCase() && 
+        v.language === language
+    );
+    if (exists) return;
 
     if ('speechSynthesis' in window) {
         const u = new SpeechSynthesisUtterance(cleanWord);
         u.lang = language === 'EN' ? 'en-US' : language === 'FR' ? 'fr-FR' : 'ko-KR';
         window.speechSynthesis.speak(u);
     }
-    
+
     const newItem: VocabularyItem = {
       id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
-      word: targetWord,
+      word: cleanWord,
+      language: language,
       contextSentence: contextSentence,
-      translation: localTranslation || undefined,
+      translation: undefined, 
       timestamp: Date.now(),
       strength: 0,
       lastReview: Date.now(),
-      nextReview: Date.now(), // Due immediately
+      nextReview: Date.now(), 
       reviewHistory: []
     };
 
     setVocabulary(prev => [newItem, ...prev]);
+
+    try {
+        let definition: string | undefined;
+        let metadata: any = {};
+        let found = false;
+
+        // Level 2: Scoped Parallel Search (Exact Match)
+        let cascadeResults = await db.lookupCascade(language, cleanWord);
+        
+        // Level 3: Smart Lemmatization Bridge (If Exact Match Failed)
+        if (cascadeResults.length === 0) {
+            const candidates = getLemmaCandidates(cleanWord, language);
+            // Skip the first candidate if it matches the original cleanWord (redundant check)
+            for (const candidate of candidates) {
+                if (candidate.toLowerCase() === cleanWord.toLowerCase()) continue;
+                
+                const lemmaResults = await db.lookupCascade(language, candidate);
+                if (lemmaResults.length > 0) {
+                    cascadeResults = lemmaResults;
+                    metadata.rootWord = candidate; // Mark the bridge
+                    break; 
+                }
+            }
+        }
+
+        if (cascadeResults.length > 0) {
+            const topResult = cascadeResults[0];
+            definition = topResult.entry.translation;
+            
+            // Format richer metadata for UI Hierarchy
+            const allDefinitions = cascadeResults.map(r => ({
+                source: r.source.name,
+                text: r.entry.translation,
+                priority: r.source.priority
+            }));
+
+            metadata = { 
+                ...metadata,
+                ...topResult.entry.metadata, 
+                source: topResult.source.name,
+                allDefinitions // Store the hierarchy
+            };
+            
+            found = true;
+        }
+
+        if (found && definition) {
+            updateWordDefinition(newItem.id, definition, metadata);
+        } else {
+            // Level 4: AI Fallback
+            handleAskAI(newItem);
+        }
+
+    } catch (e) {
+        console.error("Waterfall lookup failed", e);
+    }
+  };
+
+  const updateWordDefinition = (id: string, translation: string, metadata?: any) => {
+      setVocabulary(prev => prev.map(v => 
+          v.id === id ? { ...v, translation, metadata } : v
+      ));
   };
 
   const handleRemoveWord = (id: string) => {
     setVocabulary(prev => prev.filter(item => item.id !== id));
   };
 
-  // SRS Update
   const handleUpdateStrength = (id: string, newStrength: number) => {
       setVocabulary(prev => prev.map(v => {
           if (v.id === id) {
               const now = Date.now();
               const isImprovement = newStrength > v.strength;
-              
-              // Calculate Next Review based on SRS algorithm
               const { nextReview } = calculateNextReview(v.strength, v.lastReview, isImprovement);
-
               return { 
                   ...v, 
                   strength: newStrength,
@@ -156,20 +165,22 @@ const App: React.FC = () => {
   const handleAskAI = async (item: VocabularyItem) => {
       try {
           const result = await defineWord(item.word, item.contextSentence, language);
-          setVocabulary(prev => prev.map(v => 
-              v.id === item.id ? { 
-                  ...v, 
-                  translation: result.translation,
-                  metadata: {
-                      gender: result.gender,
-                      nuance: result.nuance,
-                      cognate: result.cognate,
-                      hanja: result.hanja
-                  }
-              } : v
-          ));
           
-          // Log interaction
+          const metadata = {
+              gender: result.gender,
+              nuance: result.nuance,
+              cognate: result.cognate,
+              hanja: result.hanja,
+              source: 'Gemini AI',
+              allDefinitions: [{ source: 'Gemini AI', text: result.translation }]
+          };
+
+          updateWordDefinition(item.id, result.translation, metadata);
+
+          if (result.translation && !result.translation.includes("失败")) {
+              await db.saveDefinition(language, item.word, result.translation, metadata);
+          }
+
           await db.logSession({
               id: Date.now().toString(),
               type: 'REVIEW',
@@ -178,9 +189,8 @@ const App: React.FC = () => {
               duration: 0,
               timestamp: Date.now()
           });
-
       } catch (err) {
-          alert("AI Definition Failed");
+          console.error("AI Definition Failed");
       }
   };
 
@@ -189,13 +199,20 @@ const App: React.FC = () => {
       setCurrentTab('VOCAB');
   };
 
-  // Filter vocab for Review Mode
+  const currentLanguageVocab = vocabulary.filter(v => 
+      v.language === language || (!v.language && language === 'EN') 
+  );
+
   const displayedVocab = isReviewMode 
-     ? getDailyReviewList(vocabulary)
-     : vocabulary;
+     ? getDailyReviewList(currentLanguageVocab)
+     : currentLanguageVocab;
 
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
+        return;
+      }
+
       if (e.ctrlKey && e.key === '1') setLanguage('EN');
       if (e.ctrlKey && e.key === '2') setLanguage('FR');
       if (e.ctrlKey && e.key === '3') setLanguage('KR');
@@ -208,7 +225,7 @@ const App: React.FC = () => {
             return 'LISTENING';
         });
       }
-      if (e.key === '?' && !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
+      if (e.key === '?') {
         setShowShortcuts(prev => !prev);
       }
     };
@@ -217,7 +234,6 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, []);
 
-  // Exit review mode if list empty
   useEffect(() => {
       if (isReviewMode && displayedVocab.length === 0) {
           setIsReviewMode(false);
@@ -225,7 +241,7 @@ const App: React.FC = () => {
   }, [displayedVocab.length, isReviewMode]);
 
   return (
-    <div className="min-h-screen relative pb-20 overflow-x-hidden bg-slate-50 selection:bg-green-100 selection:text-green-900">
+    <div className="min-h-screen relative pb-20 overflow-x-hidden bg-white text-slate-900 selection:bg-green-100 selection:text-green-800">
       <Header 
         currentTab={currentTab} 
         onTabChange={(t) => { setCurrentTab(t); setIsReviewMode(false); }} 
@@ -238,18 +254,18 @@ const App: React.FC = () => {
         <div className="mb-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="text-center sm:text-left">
             <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight mb-2">
-              {currentTab === 'LISTENING' ? '听力实验室' : currentTab === 'READER' ? '极速阅读' : currentTab === 'VOCAB' ? (isReviewMode ? '今日复习' : '语境生词本') : '量化成果'}
+              {currentTab === 'LISTENING' ? 'Listening Lab' : currentTab === 'READER' ? 'Speed Reader' : currentTab === 'VOCAB' ? (isReviewMode ? 'SRS Review' : 'Vocabulary Bank') : 'Analytics'}
             </h2>
             <p className="text-slate-500 text-sm sm:text-base font-medium">
-              {currentTab === 'LISTENING' ? '通过主动听写和精准断句掌握地道发音。' 
-               : currentTab === 'READER' ? '利用 RSVP 技术提升阅读速度和理解力。'
-               : currentTab === 'VOCAB' ? (isReviewMode ? 'Spaced Repetition Review Session' : '基于上下文的单词回顾与闪卡记忆。')
-               : '追踪你的语言习得进程与强度分布。'}
+              {currentTab === 'LISTENING' ? 'Master native pronunciation via active dictation and flow state loops.' 
+               : currentTab === 'READER' ? 'Absorb content faster using RSVP technology with Smart Pacing.'
+               : currentTab === 'VOCAB' ? (isReviewMode ? 'Time for your daily spaced repetition session.' : 'Your personal context-aware dictionary.')
+               : 'Visualize your acquisition metrics and cognitive patterns.'}
             </p>
           </div>
-          <button onClick={() => setShowShortcuts(true)} className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-400 hover:text-slate-600 transition-all">
+          <button onClick={() => setShowShortcuts(true)} className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 hover:border-slate-300 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-900 transition-all shadow-sm">
             <kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 rounded text-[10px]">?</kbd>
-            键盘快捷键
+            Shortcuts
           </button>
         </div>
 
@@ -282,19 +298,14 @@ const App: React.FC = () => {
       {isSettingsOpen && (
         <SettingsModal 
             onClose={() => setIsSettingsOpen(false)} 
-            localDictSize={dictCount}
-            onImportDict={handleImportDictionary}
-            onClearDict={handleClearDictionary}
+            currentAppLanguage={language}
+            onCacheRefreshNeeded={() => {}} 
         />
       )}
 
       {showShortcuts && (
         <KeyboardShortcuts onClose={() => setShowShortcuts(false)} />
       )}
-
-      <div className="fixed bottom-6 left-0 right-0 text-center pointer-events-none opacity-30 hidden sm:block">
-        <span className="text-xs uppercase tracking-[0.3em] text-slate-400 font-bold">LinguistFlow AI</span>
-      </div>
     </div>
   );
 };

@@ -1,129 +1,214 @@
 
-import { TranscriptionSegment, DictionaryEntry } from '../types';
+import { DictionaryEntry, TranscriptionSegment } from '../types';
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Initialize PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.0.379/build/pdf.worker.mjs';
 
-// --- Worker Logic as String ---
+// Worker code for heavy lifting
 const workerCode = `
-self.onmessage = async (e) => {
-  const { file } = e.data;
-  const reader = new FileReader();
-
-  reader.onprogress = (event) => {
-    if (event.lengthComputable) {
-      const percent = Math.round((event.loaded / event.total) * 50); // Reading is first 50%
-      self.postMessage({ type: 'progress', value: percent });
+class SimpleBloomFilter {
+  constructor(size = 2000000) {
+    this.size = size;
+    this.bitArray = new Uint8Array(Math.ceil(size / 8));
+  }
+  hash(str) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
     }
-  };
+    return h >>> 0;
+  }
+  add(str) {
+    const h = this.hash(str);
+    const k = 3; 
+    for (let i = 0; i < k; i++) {
+      const idx = (h + i * 0x5bd1e995) % this.size;
+      const byteIdx = Math.floor(idx / 8);
+      const bitIdx = idx % 8;
+      this.bitArray[byteIdx] |= (1 << bitIdx);
+    }
+  }
+  getBuffer() { return this.bitArray.buffer; }
+}
 
-  reader.onload = () => {
-    const text = reader.result;
-    const extension = file.name.split('.').pop().toLowerCase();
-    
-    try {
-      let entries = [];
-      let skippedCount = 0;
-      self.postMessage({ type: 'progress', value: 60, status: 'Parsing text...' });
+let streamLeftover = '';
+let currentBatch = [];
+let processedCount = 0;
+const BATCH_SIZE = 3000;
+const bloom = new SimpleBloomFilter(2000000);
+const decoder = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true });
 
-      if (extension === 'json') {
-        try {
-          const json = JSON.parse(text);
-          if (Array.isArray(json)) {
-            entries = json.map(item => {
-              if (!item.word || (!item.translation && !item.definition && !item.meaning)) {
-                skippedCount++;
-                return null;
-              }
-              return {
-                word: item.word || item.term,
-                translation: item.translation || item.definition || item.meaning
-              };
-            }).filter(Boolean);
-          } else if (typeof json === 'object') {
-            entries = Object.entries(json).map(([key, value]) => ({
-              word: key,
-              translation: String(value)
-            }));
-          }
-        } catch (jsonErr) {
-          throw new Error("Invalid JSON format");
-        }
-      } 
-      else if (extension === 'csv' || extension === 'txt') {
-        const lines = text.split('\\n');
-        const totalLines = lines.length;
-        
-        for (let i = 0; i < totalLines; i++) {
-           if (i % 5000 === 0) {
-             const p = 60 + Math.round((i / totalLines) * 30); // Parsing is next 30%
-             self.postMessage({ type: 'progress', value: p });
-           }
-           
-           try {
-             const line = lines[i].trim();
-             if (!line) continue;
+function processLines(lines) {
+  for (const line of lines) {
+     if (!line.trim()) continue;
+     
+     let parts;
+     if (line.includes('\\t')) parts = line.split('\\t');
+     else if (line.includes(',')) parts = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/); 
+     else parts = line.split('，');
+
+     if (parts.length >= 2) {
+         let word = parts[0].trim().replace(/^"|"$/g, '');
+         let translation = parts.slice(1).join(',').trim().replace(/^"|"$/g, '');
+         
+         if (word && translation) {
+            let metadata = {};
+            // Optional: Parse Hanja if in CSV (e.g., column 3)
+            if (parts.length > 2) {
+                 const extra = parts[2].trim().replace(/^"|"$/g, '');
+                 if (extra && extra.match(/[\\u4e00-\\u9fa5]/)) {
+                     metadata.hanja = extra;
+                 }
+            }
              
-             // Smart split: tabs, comma, or chinese comma
-             const parts = line.split(/,|，|\\t/);
-             
-             if (parts.length >= 2) {
-               const word = parts[0].trim();
-               const translation = parts.slice(1).join(',').trim();
-               if (word && translation) {
-                 entries.push({ word, translation });
-               } else {
-                 skippedCount++;
-               }
-             } else {
-               skippedCount++;
+             bloom.add(word.toLowerCase());
+             currentBatch.push({ word, translation, metadata });
+
+             if (currentBatch.length >= BATCH_SIZE) {
+                 self.postMessage({ type: 'batch', entries: currentBatch });
+                 processedCount += currentBatch.length;
+                 currentBatch = [];
              }
-           } catch (lineErr) {
-             skippedCount++;
-             continue; // Skip malformed lines
-           }
+         }
+     }
+  }
+}
+
+self.onmessage = async (e) => {
+  const { type, file } = e.data;
+
+  // --- FILE MODE ---
+  if (file) {
+      const CHUNK_SIZE = 1024 * 1024; 
+      let offset = 0;
+      let leftover = ''; 
+      const fileSize = file.size;
+
+      function readNextChunk() {
+        if (offset >= fileSize) {
+          if (leftover.trim()) processLines([leftover]);
+          if (currentBatch.length > 0) {
+             self.postMessage({ type: 'batch', entries: currentBatch });
+             processedCount += currentBatch.length;
+          }
+          self.postMessage({ type: 'done', total: processedCount, bloomBuffer: bloom.getBuffer() }, [bloom.getBuffer()]);
+          return;
         }
+
+        const slice = file.slice(offset, offset + CHUNK_SIZE);
+        const reader = new FileReader();
+
+        reader.onload = (e) => {
+          const buffer = e.target.result;
+          const textChunk = decoder.decode(buffer, { stream: true });
+          const combined = leftover + textChunk;
+          const lines = combined.split(/\\r?\\n/);
+          
+          leftover = lines.pop(); 
+          processLines(lines);
+
+          const progress = Math.min(100, Math.round(((offset + CHUNK_SIZE) / fileSize) * 100));
+          self.postMessage({ type: 'progress', value: progress, count: processedCount });
+
+          offset += CHUNK_SIZE;
+          setTimeout(readNextChunk, 0); 
+        };
+        reader.onerror = () => self.postMessage({ type: 'error', error: 'Read error' });
+        reader.readAsArrayBuffer(slice);
       }
-      
-      self.postMessage({ type: 'progress', value: 90, status: 'Finalizing...' });
-      
-      const statusMsg = skippedCount > 0 
-        ? \`Parsed \${entries.length} items (Skipped \${skippedCount} errors)\` 
-        : null;
+      readNextChunk();
+  }
 
-      self.postMessage({ type: 'done', result: entries, status: statusMsg });
+  // --- STREAM MODE ---
+  if (type === 'streamData') {
+      const { chunk } = e.data;
+      const textChunk = decoder.decode(chunk, { stream: true });
+      const combined = streamLeftover + textChunk;
+      const lines = combined.split(/\\r?\\n/);
+      streamLeftover = lines.pop() || '';
+      processLines(lines);
+      // We rely on the main thread to calculate download progress, 
+      // but we report count back for UI
+      self.postMessage({ type: 'progress', value: 0, count: processedCount }); 
+  }
 
-    } catch (err) {
-      self.postMessage({ type: 'error', error: err.message });
-    }
-  };
-
-  reader.onerror = () => {
-    self.postMessage({ type: 'error', error: 'Failed to read file' });
-  };
-
-  reader.readAsText(file);
+  if (type === 'streamEnd') {
+      if (streamLeftover.trim()) processLines([streamLeftover]);
+      if (currentBatch.length > 0) {
+          self.postMessage({ type: 'batch', entries: currentBatch });
+          processedCount += currentBatch.length;
+      }
+      self.postMessage({ type: 'done', total: processedCount, bloomBuffer: bloom.getBuffer() }, [bloom.getBuffer()]);
+  }
 };
 `;
 
-// Helper to create worker from string
 const createWorker = () => {
   const blob = new Blob([workerCode], { type: 'application/javascript' });
   return new Worker(URL.createObjectURL(blob));
 };
 
-export const parseDictionaryFileInWorker = (file: File, onProgress: (p: number, s?: string) => void): Promise<DictionaryEntry[]> => {
+export const createDictionaryStreamParser = (
+    onProgress: (count: number) => void,
+    onBatch: (entries: Partial<DictionaryEntry>[]) => Promise<void>
+) => {
+    const worker = createWorker();
+    
+    worker.onmessage = async (e) => {
+        const { type, count, entries, total, bloomBuffer, error } = e.data;
+        if (type === 'progress') {
+            onProgress(count);
+        } else if (type === 'batch') {
+            await onBatch(entries);
+        } else if (type === 'done') {
+            // Stream finished
+        } else if (type === 'error') {
+            console.error(error);
+        }
+    };
+    
+    return {
+        push: (chunk: Uint8Array) => {
+             worker.postMessage({ type: 'streamData', chunk }, [chunk.buffer]);
+        },
+        end: () => {
+            return new Promise<{ total: number, bloomBuffer: ArrayBuffer }>((resolve) => {
+                const finalListener = (e: MessageEvent) => {
+                    if (e.data.type === 'done') {
+                        worker.removeEventListener('message', finalListener);
+                        worker.terminate();
+                        resolve({ total: e.data.total, bloomBuffer: e.data.bloomBuffer });
+                    }
+                };
+                worker.addEventListener('message', finalListener);
+                worker.postMessage({ type: 'streamEnd' });
+            });
+        }
+    };
+};
+
+export const parseDictionaryFileStream = (
+    file: File, 
+    onProgress: (percent: number, count: number) => void,
+    onBatch: (entries: Partial<DictionaryEntry>[]) => Promise<void>
+): Promise<{ total: number, bloomBuffer: ArrayBuffer }> => {
   return new Promise((resolve, reject) => {
     const worker = createWorker();
     
-    worker.onmessage = (e) => {
-      const { type, value, status, result, error } = e.data;
+    worker.onmessage = async (e) => {
+      const { type, value, count, entries, error, total, bloomBuffer } = e.data;
+      
       if (type === 'progress') {
-        onProgress(value, status);
+        onProgress(value, count);
+      } else if (type === 'batch') {
+        try {
+            await onBatch(entries);
+        } catch (err) {
+            console.error("Batch insert failed", err);
+        }
       } else if (type === 'done') {
-        if (status) console.log(status);
-        resolve(result);
+        resolve({ total, bloomBuffer });
         worker.terminate();
       } else if (type === 'error') {
         reject(new Error(error));
@@ -133,6 +218,40 @@ export const parseDictionaryFileInWorker = (file: File, onProgress: (p: number, 
 
     worker.postMessage({ file });
   });
+};
+
+/**
+ * Reads the first 2KB of a file to generate a preview of how it will be parsed.
+ */
+export const previewDictionaryFile = async (file: File): Promise<{ word: string, translation: string }[]> => {
+    return new Promise((resolve, reject) => {
+        const slice = file.slice(0, 2048); // Read first 2KB
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const text = e.target?.result as string;
+            const lines = text.split(/\r?\n/).slice(0, 6); // Take first 6 lines
+            const previewData: { word: string, translation: string }[] = [];
+            
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                let parts;
+                if (line.includes('\t')) parts = line.split('\t');
+                else if (line.includes(',')) parts = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+                else parts = line.split('，');
+
+                if (parts.length >= 2) {
+                    const word = parts[0].trim().replace(/^"|"$/g, '');
+                    const translation = parts.slice(1).join(',').trim().replace(/^"|"$/g, '');
+                    if (word && translation) {
+                        previewData.push({ word, translation });
+                    }
+                }
+            }
+            resolve(previewData);
+        };
+        reader.onerror = () => reject(new Error("Failed to read file for preview"));
+        reader.readAsText(slice);
+    });
 };
 
 export const readTextFile = (file: File): Promise<string> => {
@@ -212,8 +331,4 @@ export const parseSubtitle = (content: string): TranscriptionSegment[] => {
     }
   });
   return segments;
-};
-
-export const parseDictionaryFile = async (file: File): Promise<DictionaryEntry[]> => {
-  return parseDictionaryFileInWorker(file, () => {});
 };

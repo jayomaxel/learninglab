@@ -8,23 +8,33 @@ export interface TranscriptionSegment {
   translation: string;
 }
 
+export interface DefinitionSource {
+  source: string;
+  text: string;
+  priority?: number;
+}
+
 export interface VocabularyItem {
   id: string;
   word: string;
+  language: Language; 
   contextSentence: string;
   translation?: string;
   metadata?: {
     gender?: string;
     nuance?: string;
     cognate?: string;
-    hanja?: string; // Korean Hanja root
+    hanja?: string;
+    source?: string; // Dictionary Name
+    rootWord?: string;
+    allDefinitions?: DefinitionSource[];
   };
-  // Mastery & SRS System
-  strength: number; // 0-5 (Mastery Level)
-  lastReview: number; // timestamp
-  nextReview: number; // timestamp for SRS
-  reviewHistory?: number[]; // timestamp of reviews
+  strength: number; 
+  lastReview: number; 
+  nextReview: number; 
+  reviewHistory?: number[]; 
   timestamp: number;
+  audioPath?: string; 
 }
 
 export interface DifficultWord {
@@ -39,20 +49,39 @@ export interface DifficultyAnalysis {
   level: string;
   difficultWords: DifficultWord[];
   suggestion: 'EASY' | 'OPTIMAL' | 'HARD';
-  starRating?: number; // 1-5 stars based on user's known vocab
+  starRating?: number; 
+}
+
+export interface DictionarySource {
+  id: string;
+  name: string;
+  language: Language;
+  priority: number;
+  enabled: boolean;
+  count: number;
+  importedAt: number;
+  type: 'USER' | 'IMPORTED' | 'SYSTEM';
 }
 
 export interface DictionaryEntry {
+  dictId: string; 
   word: string;
   translation: string;
+  metadata?: {
+    gender?: string;
+    nuance?: string;
+    cognate?: string;
+    hanja?: string;
+  };
+  audioPath?: string;
 }
 
 export interface StudyLog {
   id: string;
   type: 'DICTATION' | 'READER' | 'REVIEW';
   language: Language;
-  score: number; // Accuracy % or Words Reviewed count
-  duration: number; // seconds
+  score: number; 
+  duration: number; 
   timestamp: number;
 }
 
