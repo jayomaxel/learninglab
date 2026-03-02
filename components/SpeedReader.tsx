@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Language, DifficultyAnalysis, CEFRLevel } from '../types';
 import { translateText, fetchReadingMaterial, analyzeTextDifficulty } from '../services/gemini';
-import { db } from '../services/db'; 
+import { db } from '../services/db';
 import DifficultyWarmup from './DifficultyWarmup';
 
 // Define the missing props interface for SpeedReader
@@ -15,31 +15,76 @@ interface SpeedReaderProps {
   onTaskComplete?: () => void;
 }
 
-const getORPIndex = (text: string): number => {
-  const len = text.length;
-  if (len <= 1) return 0;
-  if (len <= 5) return Math.ceil(len / 2) - 1;
-  return Math.floor(len * 0.4);
+const getORPIndex = (text: string, language?: Language): number => {
+  const core = text.replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, "");
+  const len = core.length;
+  if (len <= 0) return 0;
+
+  let coreIdx = 0;
+  if (language === 'KR') {
+    if (len <= 2) coreIdx = 0;
+    else if (len <= 4) coreIdx = 1;
+    else coreIdx = 2;
+  } else {
+    coreIdx = len <= 5 ? Math.ceil(len / 2) - 1 : Math.floor(len * 0.4);
+  }
+
+  let count = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (!/[.,/#!$%^&*;:{}=\-_`~() ]/.test(text[i])) { // Ignore punctuation for position
+      if (count === coreIdx) return i;
+      count++;
+    }
+  }
+  return 0;
 };
 
 const SpeedReader: React.FC<SpeedReaderProps> = ({ language, onSaveWord, knownWords = new Set(), userId, level, onTaskComplete }) => {
   const isBeginner = level.startsWith('A');
   const [text, setText] = useState('');
   const [wpm, setWpm] = useState(isBeginner ? 180 : 300);
-  const [chunkSize, setChunkSize] = useState(1); 
+  const [chunkSize, setChunkSize] = useState(1);
   const [chunks, setChunks] = useState<string[]>([]);
-  const [currentChunkIdx, setCurrentChunkIdx] = useState(-1);
+  const [currentChunkIdx, _setCurrentChunkIdx] = useState(-1);
   const [isPlaying, setIsPlaying] = useState(false);
   const [translation, setTranslation] = useState<string | null>(null);
   const [translating, setTranslating] = useState(false);
   const [aiInput, setAiInput] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const leftRef = useRef<HTMLDivElement>(null);
+  const pivotRef = useRef<HTMLDivElement>(null);
+  const rightRef = useRef<HTMLDivElement>(null);
+  const progressBarRef = useRef<HTMLDivElement>(null);
+  const stateRef = useRef({ isPlaying: false, currentIdx: -1, chunks: [] as string[] });
+  const lastTimestampRef = useRef(0);
+  const rafRef = useRef<number | null>(null);
+
+  const setCurrentChunkIdx = (idx: number) => {
+    stateRef.current.currentIdx = idx;
+    _setCurrentChunkIdx(idx);
+    updateDisplay(idx);
+  };
+
+  const updateDisplay = (idx: number) => {
+    const chunk = stateRef.current.chunks[idx];
+    if (!chunk) return;
+    const orpIndex = getORPIndex(chunk, language);
+    if (leftRef.current) leftRef.current.textContent = chunk.substring(0, orpIndex).replace(/ /g, "\u00a0");
+    if (pivotRef.current) pivotRef.current.textContent = chunk[orpIndex];
+    if (rightRef.current) rightRef.current.textContent = chunk.substring(orpIndex + 1).replace(/ /g, "\u00a0");
+    if (progressBarRef.current) progressBarRef.current.style.width = `${((idx + 1) / stateRef.current.chunks.length) * 100}%`;
+  };
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<DifficultyAnalysis | null>(null);
   const [showWarmup, setShowWarmup] = useState(false);
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<number | null>(null);
+
+  // Sync state to ref for high-perf access
+  useEffect(() => { stateRef.current.isPlaying = isPlaying; }, [isPlaying]);
+  useEffect(() => { stateRef.current.chunks = chunks; }, [chunks]);
 
   const processTextIntoChunks = useCallback((rawText: string, size: number) => {
     const rawWords = rawText.trim().split(/\s+/);
@@ -57,23 +102,33 @@ const SpeedReader: React.FC<SpeedReaderProps> = ({ language, onSaveWord, knownWo
 
   const prepareToRead = useCallback(async () => {
     if (!analysisResult && text.length > 50) {
-        setAnalyzing(true);
-        const result = await analyzeTextDifficulty(text, language);
-        setAnalyzing(false);
-        setAnalysisResult(result);
-        if (result.suggestion === 'HARD' || result.difficultWords.length > 0) {
-            setShowWarmup(true);
-            return;
-        }
+      setAnalyzing(true);
+      const result = await analyzeTextDifficulty(text, language);
+      setAnalyzing(false);
+      setAnalysisResult(result);
+      if (result.suggestion === 'HARD' || result.difficultWords.length > 0) {
+        setShowWarmup(true);
+        return;
+      }
     }
     const processed = processTextIntoChunks(text, chunkSize);
-    if (processed.length > 0) { setChunks(processed); setCurrentChunkIdx(0); setIsPlaying(true); }
+    if (processed.length > 0) {
+      setChunks(processed);
+      stateRef.current.chunks = processed;
+      setCurrentChunkIdx(0);
+      setIsPlaying(true);
+    }
   }, [text, chunkSize, language, analysisResult, processTextIntoChunks]);
 
   const handleWarmupProceed = () => {
-      setShowWarmup(false);
-      const processed = processTextIntoChunks(text, chunkSize);
-      if (processed.length > 0) { setChunks(processed); setCurrentChunkIdx(0); setIsPlaying(true); }
+    setShowWarmup(false);
+    const processed = processTextIntoChunks(text, chunkSize);
+    if (processed.length > 0) {
+      setChunks(processed);
+      stateRef.current.chunks = processed;
+      setCurrentChunkIdx(0);
+      setIsPlaying(true);
+    }
   };
 
   const togglePlayback = useCallback(() => {
@@ -91,63 +146,76 @@ const SpeedReader: React.FC<SpeedReaderProps> = ({ language, onSaveWord, knownWo
     } catch (err) { setTranslation("翻译失败。"); } finally { setTranslating(false); }
   }, [text, userId, onTaskComplete]);
 
-  useEffect(() => {
-    if (isPlaying && currentChunkIdx < chunks.length) {
-      const delay = (60 / wpm) * 1000 * chunks[currentChunkIdx].split(' ').length;
-      timerRef.current = window.setTimeout(() => { 
-          if (currentChunkIdx < chunks.length - 1) setCurrentChunkIdx(prev => prev + 1); 
-          else { setIsPlaying(false); onTaskComplete?.(); }
-      }, delay);
-    }
-    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, [isPlaying, currentChunkIdx, wpm, chunks, onTaskComplete]); 
+  const calculateDelay = useCallback((chunk: string) => {
+    const baseDelay = (60 / wpm) * 1000 * chunk.split(' ').length;
+    let multiplier = 1.0;
+    if (chunk.length > 8) multiplier *= 1.2;
+    if (/[，,]$/.test(chunk)) multiplier *= 2.0;
+    if (/[.！？!？]$/.test(chunk)) multiplier *= 3.0;
+    return baseDelay * multiplier;
+  }, [wpm]);
 
-  const renderORP = (chunkText: string) => {
-    const orpIndex = getORPIndex(chunkText);
-    const leftPart = chunkText.substring(0, orpIndex);
-    const pivotChar = chunkText[orpIndex];
-    const rightPart = chunkText.substring(orpIndex + 1);
-    return (
-      <div className="flex items-baseline justify-center w-full font-mono text-4xl sm:text-6xl text-slate-700">
-        <div className="flex-1 text-right">{leftPart}</div>
-        <div className="flex-none font-black text-red-500 mx-0.5">{pivotChar}</div>
-        <div className="flex-1 text-left">{rightPart}</div>
-      </div>
-    );
-  };
+  useEffect(() => {
+    let lastTime = 0;
+    const loop = (time: number) => {
+      if (!stateRef.current.isPlaying) return;
+      const currentIdx = stateRef.current.currentIdx;
+      const chunks = stateRef.current.chunks;
+      if (currentIdx >= 0 && currentIdx < chunks.length) {
+        const delay = calculateDelay(chunks[currentIdx]);
+        if (time - lastTime >= delay) {
+          lastTime = time;
+          if (currentIdx < chunks.length - 1) setCurrentChunkIdx(currentIdx + 1);
+          else { setIsPlaying(false); onTaskComplete?.(); }
+        }
+      }
+      rafRef.current = requestAnimationFrame(loop);
+    };
+    if (isPlaying) {
+      lastTime = performance.now();
+      rafRef.current = requestAnimationFrame(loop);
+    }
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [isPlaying, calculateDelay, onTaskComplete]);
 
   return (
     <div className="space-y-6">
       {showWarmup && analysisResult && (
         <DifficultyWarmup analysis={analysisResult} onProceed={handleWarmupProceed} onCancel={() => setShowWarmup(false)} />
       )}
-      
+
       <div className="bg-white p-6 rounded-xl border border-green-200 flex flex-wrap gap-4 items-center">
-        <input 
-          value={aiInput} onChange={(e) => setAiInput(e.target.value)} 
-          placeholder="输入阅读主题或链接..." className="flex-1 bg-green-50 px-4 py-2 rounded-lg border border-green-100 text-sm" 
+        <input
+          value={aiInput} onChange={(e) => setAiInput(e.target.value)}
+          placeholder="输入阅读主题或链接..." className="flex-1 bg-green-50 px-4 py-2 rounded-lg border border-green-100 text-sm"
         />
         <div className="flex gap-2">
-            <button onClick={() => fetchReadingMaterial(aiInput, language).then(r => setText(r.text))} disabled={loading || !aiInput} className="bg-green-600 text-white px-6 py-2 rounded-lg text-xs font-bold disabled:opacity-50">开始提取</button>
+          <button onClick={() => fetchReadingMaterial(aiInput, language).then(r => setText(r.text))} disabled={loading || !aiInput} className="bg-green-600 text-white px-6 py-2 rounded-lg text-xs font-bold disabled:opacity-50">开始提取</button>
         </div>
       </div>
 
       <div className="bg-white rounded-3xl p-12 border border-green-200 min-h-[350px] flex flex-col justify-between">
         <div className="flex-1 flex items-center justify-center relative">
-          {analyzing ? <span className="text-slate-400 font-bold uppercase tracking-widest">分析中...</span> : 
-           currentChunkIdx >= 0 && currentChunkIdx < chunks.length ? renderORP(chunks[currentChunkIdx]) : 
-           <span className="text-slate-300 font-bold text-xl italic">准备就绪</span>}
-           <div className="absolute top-0 bottom-0 left-1/2 w-px bg-green-500/10 pointer-events-none" />
+          {analyzing ? <span className="text-slate-400 font-bold uppercase tracking-widest">分析中...</span> :
+            currentChunkIdx >= 0 && currentChunkIdx < chunks.length ? (
+              <div className="flex items-baseline justify-center w-full font-mono text-4xl sm:text-6xl text-slate-700">
+                <div ref={leftRef} className="flex-1 text-right"></div>
+                <div ref={pivotRef} className="flex-none font-black text-red-500 mx-0.5"></div>
+                <div ref={rightRef} className="flex-1 text-left"></div>
+              </div>
+            ) :
+              <span className="text-slate-300 font-bold text-xl italic">准备就绪</span>}
+          <div className="absolute top-0 bottom-0 left-1/2 w-px bg-green-500/10 pointer-events-none" />
         </div>
 
         <div className="mt-8 flex flex-col items-center gap-6">
           <div className="w-full h-1.5 bg-green-50 rounded-full overflow-hidden border border-green-100">
-             <div className="h-full bg-green-500" style={{ width: `${chunks.length ? ((currentChunkIdx + 1) / chunks.length) * 100 : 0}%` }} />
+            <div ref={progressBarRef} className="h-full bg-green-500" style={{ width: `0%` }} />
           </div>
           <div className="flex items-center gap-8">
             <button onClick={() => { setIsPlaying(false); setCurrentChunkIdx(-1); }} className="p-3 bg-slate-50 text-slate-500 rounded-full border border-slate-200">重置</button>
             <button onClick={togglePlayback} className={`w-16 h-16 rounded-full flex items-center justify-center ${isPlaying ? 'bg-slate-100 text-slate-800 border border-slate-200' : 'bg-green-500 text-white'}`}>
-              {isPlaying ? <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg> : <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>}
+              {isPlaying ? <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M6 4h4v16H6zM14 4h4v16h-4z" /></svg> : <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>}
             </button>
             <button onClick={() => { if (currentChunkIdx >= 0) onSaveWord(chunks[currentChunkIdx], text); }} className="p-3 bg-green-50 text-green-600 rounded-full border border-green-200">收藏</button>
           </div>
@@ -157,22 +225,22 @@ const SpeedReader: React.FC<SpeedReaderProps> = ({ language, onSaveWord, knownWo
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-4">
           <div className="bg-white p-6 rounded-2xl border border-green-200 grid grid-cols-2 gap-6">
-             <div className="space-y-2">
-               <label className="text-[10px] font-bold text-slate-400 uppercase">阅读速度 (WPM): {wpm}</label>
-               <input type="range" min="50" max="800" step="25" value={wpm} onChange={(e) => setWpm(parseInt(e.target.value))} className="w-full accent-green-600" />
-             </div>
-             <div className="space-y-2">
-               <label className="text-[10px] font-bold text-slate-400 uppercase">分段大小: {chunkSize}</label>
-               <div className="flex gap-2">
-                 {[1, 2, 3].map(size => <button key={size} onClick={() => setChunkSize(size)} className={`flex-1 py-1 rounded-lg text-xs font-bold ${chunkSize === size ? 'bg-green-500 text-white' : 'bg-green-50 text-green-600'}`}>{size}</button>)}
-               </div>
-             </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase">阅读速度 (WPM): {wpm}</label>
+              <input type="range" min="50" max="800" step="25" value={wpm} onChange={(e) => setWpm(parseInt(e.target.value))} className="w-full accent-green-600" />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase">分段大小: {chunkSize}</label>
+              <div className="flex gap-2">
+                {[1, 2, 3].map(size => <button key={size} onClick={() => setChunkSize(size)} className={`flex-1 py-1 rounded-lg text-xs font-bold ${chunkSize === size ? 'bg-green-500 text-white' : 'bg-green-50 text-green-600'}`}>{size}</button>)}
+              </div>
+            </div>
           </div>
           <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="粘贴文本或导入素材..." className="w-full h-64 bg-white border border-green-200 rounded-2xl p-6 text-slate-700 text-lg outline-none focus:border-green-500 resize-none" />
         </div>
         <div className="bg-white rounded-2xl p-6 border border-green-200 flex flex-col min-h-[400px]">
-           <button onClick={handleTranslate} disabled={translating} className="w-full py-2 bg-green-50 text-green-700 font-bold rounded-lg border border-green-100 mb-4">{translating ? '翻译中...' : '查看全文翻译'}</button>
-           <div className="flex-1 text-sm text-slate-600 leading-relaxed overflow-y-auto">{translation}</div>
+          <button onClick={handleTranslate} disabled={translating} className="w-full py-2 bg-green-50 text-green-700 font-bold rounded-lg border border-green-100 mb-4">{translating ? '翻译中...' : '查看全文翻译'}</button>
+          <div className="flex-1 text-sm text-slate-600 leading-relaxed overflow-y-auto">{translation}</div>
         </div>
       </div>
     </div>

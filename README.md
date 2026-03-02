@@ -13,8 +13,12 @@ View your app in AI Studio: https://ai.studio/apps/drive/18ehn3Gjpyo05awaMIVIn3j
 **Prerequisites:**  Node.js
 
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+1. **一键启动 (Windows):**  
+   双击根目录下的 `启动助手.bat` 即可自动完成安装依赖、配置环境与同时开启前后端服务。
+
+2. **Run Locally (Manual):**
+   - Install dependencies: `npm install`
+   - Set your `GEMINI_API_KEY` in `.env`. (端口默认设为 3001 为后端代理，3000 为前端)。
+   - Run the app (Proxy + Frontend): `npm start`
+   - Only Frontend: `npm run dev`
+   - Only AI Proxy: `npm run proxy`

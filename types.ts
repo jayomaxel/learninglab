@@ -22,11 +22,18 @@ export interface DailyMission {
   alphabetMastery?: number; // For A0 users
 }
 
+export interface AnalysisPoint {
+  word: string;
+  index: number;
+  translation?: string;
+}
+
 export interface TranscriptionSegment {
   start: number;
   end: number;
   text: string;
   translation: string;
+  hardWords?: AnalysisPoint[];
 }
 
 export interface DefinitionSource {
@@ -39,7 +46,7 @@ export interface VocabularyItem {
   id: string;
   userId: string;
   word: string;
-  language: Language; 
+  language: Language;
   contextSentence: string;
   translation?: string;
   metadata?: {
@@ -53,10 +60,10 @@ export interface VocabularyItem {
     source?: string;
     rootWord?: string;
   };
-  strength: number; 
-  lastReview: number; 
-  nextReview: number; 
-  reviewHistory?: number[]; 
+  strength: number;
+  lastReview: number;
+  nextReview: number;
+  reviewHistory?: number[];
   timestamp: number;
 }
 

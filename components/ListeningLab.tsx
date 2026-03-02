@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Language, TranscriptionSegment, DifficultyAnalysis, CEFRLevel } from '../types';
 import { generateAIPractice, generatePracticeFromUrl, analyzeTextDifficulty } from '../services/gemini';
-import { db } from '../services/db'; 
+import { db } from '../services/db';
 import DifficultyWarmup from './DifficultyWarmup';
 
 interface ListeningLabProps {
@@ -34,11 +34,42 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
   const isFullPlayingRef = useRef(false);
   const currentSegmentRef = useRef<TranscriptionSegment | null>(null);
   const lastKeystrokeTimeRef = useRef<number>(0);
+  const keystrokeIntervalsRef = useRef<number[]>([]);
+  const dynamicBaselineRef = useRef<number>(1200);
+  const silenceMapRef = useRef<number[]>([]);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
   const loopAnchorTimeRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (mediaUrl) {
+      const analyzeSilence = async () => {
+        try {
+          const res = await fetch(mediaUrl);
+          const blob = await res.blob();
+          const buffer = await blob.arrayBuffer();
+          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const audioBuffer = await ctx.decodeAudioData(buffer);
+          const data = audioBuffer.getChannelData(0);
+          const sr = audioBuffer.sampleRate;
+          const points: number[] = [];
+          const step = Math.floor(sr * 0.05); // 50ms window
+          for (let i = 0; i < data.length; i += step) {
+            let rms = 0;
+            for (let j = 0; j < Math.min(step, data.length - i); j++) rms += data[i + j] * data[i + j];
+            if (Math.sqrt(rms / step) < 0.01) points.push(i / sr);
+          }
+          silenceMapRef.current = points;
+          await ctx.close();
+        } catch (e) { console.warn("Silence Map failed", e); }
+      };
+      analyzeSilence();
+    }
+  }, [mediaUrl]);
   const [wordInputs, setWordInputs] = useState<string[]>([]);
   const [wordResults, setWordResults] = useState<('pending' | 'correct' | 'wrong')[]>([]);
   const wordResultsRef = useRef(wordResults);
-  
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const rafRef = useRef<number | null>(null);
@@ -51,17 +82,17 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
 
   useEffect(() => {
     if (segments.length > 0 && !analysisResult && !analyzing) {
-        const fullText = segments.map(s => s.text).join(' ');
-        if (fullText.length > 50) {
-            setAnalyzing(true);
-            analyzeTextDifficulty(fullText, language).then(result => {
-                setAnalyzing(false);
-                setAnalysisResult(result);
-                if (result.suggestion === 'HARD' || result.difficultWords.length > 0) {
-                    setShowWarmup(true);
-                }
-            });
-        }
+      const fullText = segments.map(s => s.text).join(' ');
+      if (fullText.length > 50) {
+        setAnalyzing(true);
+        analyzeTextDifficulty(fullText, language).then(result => {
+          setAnalyzing(false);
+          setAnalysisResult(result);
+          if (result.suggestion === 'HARD' || result.difficultWords.length > 0) {
+            setShowWarmup(true);
+          }
+        });
+      }
     }
   }, [segments, language]);
 
@@ -76,61 +107,72 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
   }, [segmentWords]);
 
   const finishSession = async () => {
-      const endTime = Date.now();
-      const duration = (endTime - sessionStartTimeRef.current) / 1000;
-      const totalWords = totalWordsCountRef.current;
-      const correct = correctWordsCountRef.current;
-      const accuracy = totalWords > 0 ? Math.round((correct / totalWords) * 100) : 0;
-      if (totalWords > 0) {
-          await db.logSession({ id: Date.now().toString(), userId, type: 'DICTATION', language, score: accuracy, duration, timestamp: endTime });
-          onTaskComplete?.();
-          alert(`练习结束！正确率: ${accuracy}%`);
-      } else { alert("练习结束！"); }
-      sessionStartTimeRef.current = Date.now();
-      correctWordsCountRef.current = 0;
-      totalWordsCountRef.current = 0;
+    const endTime = Date.now();
+    const duration = (endTime - sessionStartTimeRef.current) / 1000;
+    const totalWords = totalWordsCountRef.current;
+    const correct = correctWordsCountRef.current;
+    const accuracy = totalWords > 0 ? Math.round((correct / totalWords) * 100) : 0;
+    if (totalWords > 0) {
+      await db.logSession({ id: Date.now().toString(), userId, type: 'DICTATION', language, score: accuracy, duration, timestamp: endTime });
+      onTaskComplete?.();
+      alert(`练习结束！正确率: ${accuracy}%`);
+    } else { alert("练习结束！"); }
+    sessionStartTimeRef.current = Date.now();
+    correctWordsCountRef.current = 0;
+    totalWordsCountRef.current = 0;
   };
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+
+    video.preservesPitch = true; // 确保变速不变调
+
     const loop = () => {
       if (showWarmup) { if (!video.paused) video.pause(); return; }
-      
+
       if (!isFullPlayingRef.current) {
-         const seg = currentSegmentRef.current;
-         if (seg && video.currentTime >= seg.end) {
-            video.pause();
-            video.currentTime = seg.end;
-            const firstPending = wordResultsRef.current.findIndex(r => r !== 'correct');
-            if (firstPending !== -1) inputRefs.current[firstPending]?.focus();
-            if (rafRef.current) cancelAnimationFrame(rafRef.current);
-            return;
-         }
+        const seg = currentSegmentRef.current;
+        if (seg && video.currentTime >= seg.end) {
+          video.pause();
+          video.currentTime = seg.end;
+          const firstPending = wordResultsRef.current.findIndex(r => r !== 'correct');
+          if (firstPending !== -1) inputRefs.current[firstPending]?.focus();
+          if (rafRef.current) cancelAnimationFrame(rafRef.current);
+          return;
+        }
       } else if (flowMode) {
-           const now = Date.now();
-           const timeSinceKey = now - lastKeystrokeTimeRef.current;
-           const seg = currentSegmentRef.current;
-           if (seg) {
-               const isSegmentFinished = wordResultsRef.current.every(r => r === 'correct');
-               const isAtEnd = video.currentTime >= seg.end - 0.2; 
-               
-               if (isAtEnd && !isSegmentFinished) { 
-                   const loopStart = Math.max(seg.start, video.currentTime - 2.0);
-                   if (video.currentTime >= seg.end || video.currentTime < loopStart) video.currentTime = loopStart;
-               } else {
-                   if (timeSinceKey < 1200) video.playbackRate = 1.0;
-                   else if (timeSinceKey < 2500) video.playbackRate = 0.5;
-                   else {
-                       const loopStart = Math.max(seg.start, video.currentTime - 2.0);
-                       if (video.currentTime >= seg.end || video.currentTime < loopStart) video.currentTime = loopStart;
-                   }
-               }
-               if (isSegmentFinished && video.currentTime >= seg.end) {
-                    const newIndex = segments.findIndex(s => s.start >= seg.end - 0.1);
-                    if (newIndex !== -1 && newIndex !== currentIndex) setCurrentIndex(newIndex);
-               }
-           }
+        const now = Date.now();
+        const timeSinceKey = now - lastKeystrokeTimeRef.current;
+        const seg = currentSegmentRef.current;
+        if (seg) {
+          const isSegmentFinished = wordResultsRef.current.every(r => r === 'correct');
+          const isAtEnd = video.currentTime >= seg.end - 0.2;
+
+          const getSmartLoopStart = (target: number) => {
+            const raw = Math.max(seg.start, target);
+            const silence = silenceMapRef.current.filter(t => t >= seg.start && t <= raw + 0.2).pop();
+            return silence !== undefined ? silence : raw;
+          };
+
+          if (isAtEnd && !isSegmentFinished) {
+            const loopStart = getSmartLoopStart(video.currentTime - 2.0);
+            if (video.currentTime >= seg.end || video.currentTime < loopStart) video.currentTime = loopStart;
+          } else {
+            const baseline = dynamicBaselineRef.current;
+            const targetRate = timeSinceKey < baseline * 1.5 ? 1.0 : 0.5;
+            if (video.playbackRate !== targetRate) video.playbackRate = targetRate;
+
+            if (timeSinceKey >= baseline * 3) {
+              const loopStart = getSmartLoopStart(video.currentTime - 2.0);
+              if (video.currentTime >= seg.end || video.currentTime < loopStart) video.currentTime = loopStart;
+            }
+          }
+          if (isSegmentFinished && video.currentTime >= seg.end) {
+            const newIndex = segments.findIndex(s => s.start >= seg.end - 0.1);
+            if (newIndex !== -1 && newIndex !== currentIndex) setCurrentIndex(newIndex);
+          }
+        }
       }
       rafRef.current = requestAnimationFrame(loop);
     };
@@ -149,21 +191,35 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
     if (showWarmup || !videoRef.current || !currentSegment) return;
     setIsFullPlaying(false);
     videoRef.current.currentTime = currentSegment.start;
-    videoRef.current.play().catch(() => {});
+    videoRef.current.play().catch(() => { });
   }, [currentSegment, showWarmup]);
 
   const playFullAudio = useCallback(() => {
     if (showWarmup || !videoRef.current) return;
     setIsFullPlaying(true);
     videoRef.current.currentTime = currentIndex > 0 && segments[currentIndex] ? segments[currentIndex].start : 0;
-    videoRef.current.play().catch(() => {});
+    videoRef.current.play().catch(() => { });
     lastKeystrokeTimeRef.current = Date.now();
   }, [currentIndex, segments, showWarmup]);
 
   const normalize = (word: string) => word.toLowerCase().replace(/[.,!?;:()"'«»]/g, '').trim();
 
   const handleWordChange = (index: number, value: string) => {
-    lastKeystrokeTimeRef.current = Date.now();
+    const now = Date.now();
+    if (lastKeystrokeTimeRef.current > 0) {
+      const interval = now - lastKeystrokeTimeRef.current;
+      if (interval < 4000) { // Ignore very long pauses
+        keystrokeIntervalsRef.current.push(interval);
+        if (keystrokeIntervalsRef.current.length > 20) keystrokeIntervalsRef.current.shift();
+
+        // Use last 10-20 strokes to establish a "Baseline" for speed threshold
+        if (keystrokeIntervalsRef.current.length >= 10) {
+          const avg = keystrokeIntervalsRef.current.reduce((a, b) => a + b, 0) / keystrokeIntervalsRef.current.length;
+          dynamicBaselineRef.current = Math.max(400, Math.min(2500, avg));
+        }
+      }
+    }
+    lastKeystrokeTimeRef.current = now;
     const newInputs = [...wordInputs];
     newInputs[index] = value;
     setWordInputs(newInputs);
@@ -176,8 +232,8 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
       setWordResults(newResults);
       if (index < segmentWords.length - 1) inputRefs.current[index + 1]?.focus();
       else if (!isFullPlaying) {
-          if (currentIndex < segments.length - 1) setTimeout(() => setCurrentIndex(prev => prev + 1), 400);
-          else finishSession();
+        if (currentIndex < segments.length - 1) setTimeout(() => setCurrentIndex(prev => prev + 1), 400);
+        else finishSession();
       } else if (currentIndex === segments.length - 1) finishSession();
     } else if (value.length >= target.length && !isMatch) {
       if (wordResults[index] !== 'wrong') totalWordsCountRef.current += 1;
@@ -215,17 +271,17 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
             <button onClick={() => setInputMode('URL')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${inputMode === 'URL' ? 'bg-white text-green-600 border border-green-100' : 'text-slate-500 hover:text-slate-900'}`}>链接解析</button>
           </div>
           <div className="flex gap-2">
-             <button onClick={() => setFlowMode(!flowMode)} className={`px-4 py-2 rounded-lg text-xs font-bold border ${flowMode ? 'bg-green-50 text-green-600 border-green-200' : 'bg-white text-slate-500 border-green-100'}`}>
-                Flow Sync {flowMode ? 'ON' : 'OFF'}
-             </button>
-             <button onClick={playFullAudio} disabled={!mediaUrl || showWarmup} className="px-4 py-2 rounded-lg text-xs font-bold bg-green-500 text-white disabled:opacity-50">
-                {isFullPlaying ? '正在听写' : '开始听写'}
-             </button>
+            <button onClick={() => setFlowMode(!flowMode)} className={`px-4 py-2 rounded-lg text-xs font-bold border ${flowMode ? 'bg-green-50 text-green-600 border-green-200' : 'bg-white text-slate-500 border-green-100'}`}>
+              Flow Sync {flowMode ? 'ON' : 'OFF'}
+            </button>
+            <button onClick={playFullAudio} disabled={!mediaUrl || showWarmup} className="px-4 py-2 rounded-lg text-xs font-bold bg-green-500 text-white disabled:opacity-50">
+              {isFullPlaying ? '正在听写' : '开始听写'}
+            </button>
           </div>
         </div>
 
         <div className="flex items-center gap-3 bg-green-50 p-1 rounded-lg border border-green-100">
-          <input 
+          <input
             value={inputMode === 'PROMPT' ? aiPrompt : urlInput}
             onChange={(e) => inputMode === 'PROMPT' ? setAiPrompt(e.target.value) : setUrlInput(e.target.value)}
             placeholder={inputMode === 'PROMPT' ? "输入练习主题..." : "粘贴媒体链接..."}
@@ -254,17 +310,26 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
           {currentSegment && (
             <div className="bg-white p-6 rounded-xl border border-green-200 border-l-4 border-l-green-500">
               <div className="flex items-center justify-between mb-2">
-                 <span className="text-[10px] font-bold text-green-600 uppercase tracking-widest">中文译文</span>
-                 <button onClick={() => setShowHint(!showHint)} className="text-[10px] font-bold text-slate-400 hover:text-slate-600">{showHint ? "隐藏原文" : "提示原文"}</button>
+                <span className="text-[10px] font-bold text-green-600 uppercase tracking-widest">中文译文</span>
+                <button onClick={() => setShowHint(!showHint)} className="text-[10px] font-bold text-slate-400 hover:text-slate-600">{showHint ? "隐藏原文" : "提示原文"}</button>
               </div>
               <p className="text-lg text-slate-800 font-bold leading-relaxed">{currentSegment.translation || '（暂无翻译）'}</p>
               {showHint && (
                 <div className="bg-green-50 p-3 rounded-lg mt-3 border border-green-100">
-                   <p className="text-sm text-slate-600 italic">
-                     {segmentWords.map((word, i) => (
-                       <span key={i} onClick={() => onSaveWord(word, currentSegment.text)} className="hover:text-green-700 cursor-pointer">{word}{' '}</span>
-                     ))}
-                   </p>
+                  <p className="text-sm text-slate-600 italic">
+                    {segmentWords.map((word, i) => {
+                      const isHard = currentSegment.hardWords?.some(hw => hw.word.toLowerCase() === normalize(word));
+                      return (
+                        <span
+                          key={i}
+                          onClick={() => onSaveWord(word, currentSegment.text)}
+                          className={`hover:text-green-700 cursor-pointer ${isHard ? 'underline decoration-orange-400 decoration-2 underline-offset-4' : ''}`}
+                        >
+                          {word}{' '}
+                        </span>
+                      );
+                    })}
+                  </p>
                 </div>
               )}
             </div>
@@ -272,7 +337,7 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
         </div>
 
         <div className="lg:col-span-5">
-           {segments.length > 0 ? (
+          {segments.length > 0 ? (
             <div className="bg-white rounded-2xl p-8 border border-green-200 flex flex-col min-h-[400px]">
               <div className="flex justify-between items-center mb-6">
                 <div className="flex gap-1.5">
@@ -283,18 +348,18 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">句 {currentIndex + 1} / {segments.length}</span>
               </div>
               <div className="flex-1 flex flex-wrap gap-2 justify-center py-4">
-                  {segmentWords.map((word, idx) => (
-                    <input
-                      key={idx}
-                      ref={el => { inputRefs.current[idx] = el; }}
-                      value={wordInputs[idx] || ''}
-                      onChange={(e) => handleWordChange(idx, e.target.value)}
-                      style={{ width: `${Math.max(4, word.length + 1)}ch` }}
-                      className={`text-center py-2 px-1 text-lg font-mono font-bold rounded-lg border-2 
+                {segmentWords.map((word, idx) => (
+                  <input
+                    key={idx}
+                    ref={el => { inputRefs.current[idx] = el; }}
+                    value={wordInputs[idx] || ''}
+                    onChange={(e) => handleWordChange(idx, e.target.value)}
+                    style={{ width: `${Math.max(4, word.length + 1)}ch` }}
+                    className={`text-center py-2 px-1 text-lg font-mono font-bold rounded-lg border-2 
                         ${wordResults[idx] === 'correct' ? 'bg-green-50 border-green-500 text-green-600' : wordResults[idx] === 'wrong' ? 'bg-red-50 border-red-500 text-red-600' : 'bg-slate-50 border-slate-200 text-slate-800'}`}
-                      autoComplete="off"
-                    />
-                  ))}
+                    autoComplete="off"
+                  />
+                ))}
               </div>
               <div className="mt-8 grid grid-cols-2 gap-4">
                 <button onClick={playCurrentSegment} className="py-3 bg-green-600 text-white rounded-xl font-bold">重听句子</button>

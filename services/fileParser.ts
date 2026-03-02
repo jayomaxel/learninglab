@@ -6,37 +6,55 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.0.379/buil
 
 // Worker code for heavy lifting
 const workerCode = `
-class SimpleBloomFilter {
-  constructor(size = 2000000) {
-    this.size = size;
-    this.bitArray = new Uint8Array(Math.ceil(size / 8));
-  }
-  hash(str) {
-    let h = 0x811c9dc5;
-    for (let i = 0; i < str.length; i++) {
-      h ^= str.charCodeAt(i);
-      h = Math.imul(h, 0x01000193);
+class SimpleCuckooFilter {
+    constructor(capacity = 100000, bucketSize = 4) {
+        this.capacity = capacity;
+        this.bucketSize = bucketSize;
+        this.buckets = Array.from({ length: capacity }, () => new Uint8Array(bucketSize));
     }
-    return h >>> 0;
-  }
-  add(str) {
-    const h = this.hash(str);
-    const k = 3; 
-    for (let i = 0; i < k; i++) {
-      const idx = (h + i * 0x5bd1e995) % this.size;
-      const byteIdx = Math.floor(idx / 8);
-      const bitIdx = idx % 8;
-      this.bitArray[byteIdx] |= (1 << bitIdx);
+    hash(str) {
+        let h = 0x811c9dc5;
+        for (let i = 0; i < str.length; i++) {
+            h ^= str.charCodeAt(i);
+            h = Math.imul(h, 0x01000193);
+        }
+        return h >>> 0;
     }
-  }
-  getBuffer() { return this.bitArray.buffer; }
+    getFingerprint(str) { return (this.hash(str) & 0xFF) || 1; }
+    getHash1(str) { return this.hash(str) % this.capacity; }
+    getHash2(i1, f) { return (i1 ^ this.hash(f.toString())) % this.capacity; }
+    add(str) {
+        const f = this.getFingerprint(str);
+        const i1 = this.getHash1(str);
+        const i2 = this.getHash2(i1, f);
+        if (this.insert(i1, f) || this.insert(i2, f)) return true;
+        let i = Math.random() < 0.5 ? i1 : i2;
+        for (let n = 0; n < 200; n++) {
+            const b = this.buckets[i];
+            const idx = Math.floor(Math.random() * this.bucketSize);
+            const kickedF = b[idx]; b[idx] = f;
+            const newF = kickedF; i = this.getHash2(i, newF);
+            if (this.insert(i, newF)) return true;
+        }
+        return false;
+    }
+    insert(idx, f) {
+        const b = this.buckets[idx];
+        for (let j = 0; j < this.bucketSize; j++) { if (b[j] === 0) { b[j] = f; return true; } }
+        return false;
+    }
+    getBuffer() { 
+        const flat = new Uint8Array(this.capacity * this.bucketSize);
+        for(let i=0; i<this.capacity; i++) flat.set(this.buckets[i], i * this.bucketSize);
+        return flat.buffer; 
+    }
 }
 
 let streamLeftover = '';
 let currentBatch = [];
 let processedCount = 0;
 const BATCH_SIZE = 3000;
-const bloom = new SimpleBloomFilter(2000000);
+const cuckoo = new SimpleCuckooFilter(100000);
 const decoder = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true });
 
 function processLines(lines) {
@@ -62,7 +80,7 @@ function processLines(lines) {
                  }
             }
              
-             bloom.add(word.toLowerCase());
+             cuckoo.add(word.toLowerCase());
              currentBatch.push({ word, translation, metadata });
 
              if (currentBatch.length >= BATCH_SIZE) {
@@ -92,7 +110,8 @@ self.onmessage = async (e) => {
              self.postMessage({ type: 'batch', entries: currentBatch });
              processedCount += currentBatch.length;
           }
-          self.postMessage({ type: 'done', total: processedCount, bloomBuffer: bloom.getBuffer() }, [bloom.getBuffer()]);
+          const buffer = cuckoo.getBuffer();
+          self.postMessage({ type: 'done', total: processedCount, bloomBuffer: buffer }, [buffer]);
           return;
         }
 
@@ -139,7 +158,8 @@ self.onmessage = async (e) => {
           self.postMessage({ type: 'batch', entries: currentBatch });
           processedCount += currentBatch.length;
       }
-      self.postMessage({ type: 'done', total: processedCount, bloomBuffer: bloom.getBuffer() }, [bloom.getBuffer()]);
+      const buffer = cuckoo.getBuffer();
+      self.postMessage({ type: 'done', total: processedCount, bloomBuffer: buffer }, [buffer]);
   }
 };
 `;
@@ -150,62 +170,62 @@ const createWorker = () => {
 };
 
 export const createDictionaryStreamParser = (
-    onProgress: (count: number) => void,
-    onBatch: (entries: Partial<DictionaryEntry>[]) => Promise<void>
+  onProgress: (count: number) => void,
+  onBatch: (entries: Partial<DictionaryEntry>[]) => Promise<void>
 ) => {
-    const worker = createWorker();
-    
-    worker.onmessage = async (e) => {
-        const { type, count, entries, total, bloomBuffer, error } = e.data;
-        if (type === 'progress') {
-            onProgress(count);
-        } else if (type === 'batch') {
-            await onBatch(entries);
-        } else if (type === 'done') {
-            // Stream finished
-        } else if (type === 'error') {
-            console.error(error);
-        }
-    };
-    
-    return {
-        push: (chunk: Uint8Array) => {
-             worker.postMessage({ type: 'streamData', chunk }, [chunk.buffer]);
-        },
-        end: () => {
-            return new Promise<{ total: number, bloomBuffer: ArrayBuffer }>((resolve) => {
-                const finalListener = (e: MessageEvent) => {
-                    if (e.data.type === 'done') {
-                        worker.removeEventListener('message', finalListener);
-                        worker.terminate();
-                        resolve({ total: e.data.total, bloomBuffer: e.data.bloomBuffer });
-                    }
-                };
-                worker.addEventListener('message', finalListener);
-                worker.postMessage({ type: 'streamEnd' });
-            });
-        }
-    };
+  const worker = createWorker();
+
+  worker.onmessage = async (e) => {
+    const { type, count, entries, total, bloomBuffer, error } = e.data;
+    if (type === 'progress') {
+      onProgress(count);
+    } else if (type === 'batch') {
+      await onBatch(entries);
+    } else if (type === 'done') {
+      // Stream finished
+    } else if (type === 'error') {
+      console.error(error);
+    }
+  };
+
+  return {
+    push: (chunk: Uint8Array) => {
+      worker.postMessage({ type: 'streamData', chunk }, [chunk.buffer]);
+    },
+    end: () => {
+      return new Promise<{ total: number, bloomBuffer: ArrayBuffer }>((resolve) => {
+        const finalListener = (e: MessageEvent) => {
+          if (e.data.type === 'done') {
+            worker.removeEventListener('message', finalListener);
+            worker.terminate();
+            resolve({ total: e.data.total, bloomBuffer: e.data.bloomBuffer });
+          }
+        };
+        worker.addEventListener('message', finalListener);
+        worker.postMessage({ type: 'streamEnd' });
+      });
+    }
+  };
 };
 
 export const parseDictionaryFileStream = (
-    file: File, 
-    onProgress: (percent: number, count: number) => void,
-    onBatch: (entries: Partial<DictionaryEntry>[]) => Promise<void>
+  file: File,
+  onProgress: (percent: number, count: number) => void,
+  onBatch: (entries: Partial<DictionaryEntry>[]) => Promise<void>
 ): Promise<{ total: number, bloomBuffer: ArrayBuffer }> => {
   return new Promise((resolve, reject) => {
     const worker = createWorker();
-    
+
     worker.onmessage = async (e) => {
       const { type, value, count, entries, error, total, bloomBuffer } = e.data;
-      
+
       if (type === 'progress') {
         onProgress(value, count);
       } else if (type === 'batch') {
         try {
-            await onBatch(entries);
+          await onBatch(entries);
         } catch (err) {
-            console.error("Batch insert failed", err);
+          console.error("Batch insert failed", err);
         }
       } else if (type === 'done') {
         resolve({ total, bloomBuffer });
@@ -224,34 +244,34 @@ export const parseDictionaryFileStream = (
  * Reads the first 2KB of a file to generate a preview of how it will be parsed.
  */
 export const previewDictionaryFile = async (file: File): Promise<{ word: string, translation: string }[]> => {
-    return new Promise((resolve, reject) => {
-        const slice = file.slice(0, 2048); // Read first 2KB
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const text = e.target?.result as string;
-            const lines = text.split(/\r?\n/).slice(0, 6); // Take first 6 lines
-            const previewData: { word: string, translation: string }[] = [];
-            
-            for (const line of lines) {
-                if (!line.trim()) continue;
-                let parts;
-                if (line.includes('\t')) parts = line.split('\t');
-                else if (line.includes(',')) parts = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
-                else parts = line.split('，');
+  return new Promise((resolve, reject) => {
+    const slice = file.slice(0, 2048); // Read first 2KB
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      const lines = text.split(/\r?\n/).slice(0, 6); // Take first 6 lines
+      const previewData: { word: string, translation: string }[] = [];
 
-                if (parts.length >= 2) {
-                    const word = parts[0].trim().replace(/^"|"$/g, '');
-                    const translation = parts.slice(1).join(',').trim().replace(/^"|"$/g, '');
-                    if (word && translation) {
-                        previewData.push({ word, translation });
-                    }
-                }
-            }
-            resolve(previewData);
-        };
-        reader.onerror = () => reject(new Error("Failed to read file for preview"));
-        reader.readAsText(slice);
-    });
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let parts;
+        if (line.includes('\t')) parts = line.split('\t');
+        else if (line.includes(',')) parts = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+        else parts = line.split('，');
+
+        if (parts.length >= 2) {
+          const word = parts[0].trim().replace(/^"|"$/g, '');
+          const translation = parts.slice(1).join(',').trim().replace(/^"|"$/g, '');
+          if (word && translation) {
+            previewData.push({ word, translation });
+          }
+        }
+      }
+      resolve(previewData);
+    };
+    reader.onerror = () => reject(new Error("Failed to read file for preview"));
+    reader.readAsText(slice);
+  });
 };
 
 export const readTextFile = (file: File): Promise<string> => {
@@ -307,22 +327,22 @@ export const parseSubtitle = (content: string): TranscriptionSegment[] => {
   const segments: TranscriptionSegment[] = [];
   const cleanContent = content.replace(/\r\n/g, '\n');
   const blocks = cleanContent.split(/\n\n+/);
-  
+
   blocks.forEach(block => {
     const timeMatch = block.match(/(\d{1,2}:)?\d{1,2}:\d{1,2}[.,]\d{3}\s*-->\s*(\d{1,2}:)?\d{1,2}:\d{1,2}[.,]\d{3}/);
     if (timeMatch) {
       const times = timeMatch[0].split('-->');
       const start = timeToSeconds(times[0].trim());
       const end = timeToSeconds(times[1].trim());
-      
+
       const lines = block.split('\n');
       const timeLineIndex = lines.findIndex(line => line.includes('-->'));
-      
+
       if (timeLineIndex !== -1 && timeLineIndex < lines.length - 1) {
         const textLines = lines.slice(timeLineIndex + 1);
         const text = textLines.join(' ')
-          .replace(/<[^>]+>/g, '') 
-          .replace(/\{[^}]+\}/g, '') 
+          .replace(/<[^>]+>/g, '')
+          .replace(/\{[^}]+\}/g, '')
           .trim();
         if (text) {
           segments.push({ start, end, text, translation: '（无翻译）' });
