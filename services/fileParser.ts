@@ -1,4 +1,3 @@
-
 import { DictionaryEntry, TranscriptionSegment } from '../types';
 import * as pdfjsLib from 'pdfjs-dist';
 
@@ -62,11 +61,17 @@ function processLines(lines) {
      if (!line.trim()) continue;
      
      let parts;
-     if (line.includes('\\t')) parts = line.split('\\t');
+     if (line.includes('\t')) parts = line.split('\t');
      else if (line.includes(',')) parts = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/); 
      else parts = line.split('，');
 
-     if (parts.length >= 2) {
+  if (typeof line !== 'string' || !line.trim()) continue;
+  let parts;
+  if (line.includes('\t')) parts = line.split('\t');
+  else if (line.includes(',')) parts = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+  else parts = line.split('，');
+
+  if (parts.length >= 2) {
          let word = parts[0].trim().replace(/^"|"$/g, '');
          let translation = parts.slice(1).join(',').trim().replace(/^"|"$/g, '');
          
@@ -75,7 +80,7 @@ function processLines(lines) {
             // Optional: Parse Hanja if in CSV (e.g., column 3)
             if (parts.length > 2) {
                  const extra = parts[2].trim().replace(/^"|"$/g, '');
-                 if (extra && extra.match(/[\\u4e00-\\u9fa5]/)) {
+                 if (extra && extra.match(/[\u4e00-\u9fa5]/)) {
                      metadata.hanja = extra;
                  }
             }
@@ -105,7 +110,7 @@ self.onmessage = async (e) => {
 
       function readNextChunk() {
         if (offset >= fileSize) {
-          if (leftover.trim()) processLines([leftover]);
+          if (leftover && leftover.trim()) processLines([leftover]);
           if (currentBatch.length > 0) {
              self.postMessage({ type: 'batch', entries: currentBatch });
              processedCount += currentBatch.length;
@@ -124,8 +129,11 @@ self.onmessage = async (e) => {
           const combined = leftover + textChunk;
           const lines = combined.split(/\\r?\\n/);
           
-          leftover = lines.pop(); 
+          leftover = lines.pop() || ''; 
           processLines(lines);
+            leftover = Array.isArray(lines) && lines.length ? lines.pop() : '';
+            if (!Array.isArray(lines)) return;
+            processLines(lines);
 
           const progress = Math.min(100, Math.round(((offset + CHUNK_SIZE) / fileSize) * 100));
           self.postMessage({ type: 'progress', value: progress, count: processedCount });
@@ -147,13 +155,16 @@ self.onmessage = async (e) => {
       const lines = combined.split(/\\r?\\n/);
       streamLeftover = lines.pop() || '';
       processLines(lines);
+      streamLeftover = Array.isArray(lines) && lines.length ? lines.pop() : '';
+      if (!Array.isArray(lines)) return;
+      processLines(lines);
       // We rely on the main thread to calculate download progress, 
       // but we report count back for UI
       self.postMessage({ type: 'progress', value: 0, count: processedCount }); 
   }
 
   if (type === 'streamEnd') {
-      if (streamLeftover.trim()) processLines([streamLeftover]);
+      if (streamLeftover && streamLeftover.trim()) processLines([streamLeftover]);
       if (currentBatch.length > 0) {
           self.postMessage({ type: 'batch', entries: currentBatch });
           processedCount += currentBatch.length;
@@ -237,8 +248,8 @@ export const parseDictionaryFileStream = (
     };
 
     worker.postMessage({ file });
-  });
-};
+    });
+  }
 
 /**
  * Reads the first 2KB of a file to generate a preview of how it will be parsed.
@@ -253,7 +264,7 @@ export const previewDictionaryFile = async (file: File): Promise<{ word: string,
       const previewData: { word: string, translation: string }[] = [];
 
       for (const line of lines) {
-        if (!line.trim()) continue;
+        if (typeof line !== 'string' || !line.trim()) continue;
         let parts;
         if (line.includes('\t')) parts = line.split('\t');
         else if (line.includes(',')) parts = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
@@ -262,93 +273,14 @@ export const previewDictionaryFile = async (file: File): Promise<{ word: string,
         if (parts.length >= 2) {
           const word = parts[0].trim().replace(/^"|"$/g, '');
           const translation = parts.slice(1).join(',').trim().replace(/^"|"$/g, '');
-          if (word && translation) {
-            previewData.push({ word, translation });
-          }
+          previewData.push({ word, translation });
         }
       }
       resolve(previewData);
     };
-    reader.onerror = () => reject(new Error("Failed to read file for preview"));
+    reader.onerror = (e) => {
+      reject(e);
+    };
     reader.readAsText(slice);
   });
-};
-
-export const readTextFile = (file: File): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsText(file);
-  });
-};
-
-export const readPdfFile = async (file: File): Promise<string> => {
-  try {
-    const arrayBuffer = await file.arrayBuffer();
-    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-    const pdf = await loadingTask.promise;
-    let fullText = '';
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items.map((item: any) => item.str).join(' ');
-      fullText += pageText + '\n\n';
-    }
-    return fullText.trim();
-  } catch (error) {
-    console.error("PDF Parsing Error:", error);
-    throw new Error("PDF 解析失败，请确保文件未损坏且包含可选文本（非纯图片扫描件）。");
-  }
-};
-
-export const parseLocalFile = async (file: File): Promise<string> => {
-  const extension = file.name.split('.').pop()?.toLowerCase();
-  if (extension === 'pdf') {
-    return await readPdfFile(file);
-  } else {
-    return await readTextFile(file);
-  }
-};
-
-const timeToSeconds = (timeStr: string): number => {
-  if (!timeStr) return 0;
-  const parts = timeStr.replace(',', '.').split(':');
-  let seconds = 0;
-  if (parts.length === 3) {
-    seconds = parseInt(parts[0]) * 3600 + parseInt(parts[1]) * 60 + parseFloat(parts[2]);
-  } else if (parts.length === 2) {
-    seconds = parseInt(parts[0]) * 60 + parseFloat(parts[1]);
-  }
-  return seconds;
-};
-
-export const parseSubtitle = (content: string): TranscriptionSegment[] => {
-  const segments: TranscriptionSegment[] = [];
-  const cleanContent = content.replace(/\r\n/g, '\n');
-  const blocks = cleanContent.split(/\n\n+/);
-
-  blocks.forEach(block => {
-    const timeMatch = block.match(/(\d{1,2}:)?\d{1,2}:\d{1,2}[.,]\d{3}\s*-->\s*(\d{1,2}:)?\d{1,2}:\d{1,2}[.,]\d{3}/);
-    if (timeMatch) {
-      const times = timeMatch[0].split('-->');
-      const start = timeToSeconds(times[0].trim());
-      const end = timeToSeconds(times[1].trim());
-
-      const lines = block.split('\n');
-      const timeLineIndex = lines.findIndex(line => line.includes('-->'));
-
-      if (timeLineIndex !== -1 && timeLineIndex < lines.length - 1) {
-        const textLines = lines.slice(timeLineIndex + 1);
-        const text = textLines.join(' ')
-          .replace(/<[^>]+>/g, '')
-          .replace(/\{[^}]+\}/g, '')
-          .trim();
-        if (text) {
-          segments.push({ start, end, text, translation: '（无翻译）' });
-        }
-      }
-    }
-  });
-  return segments;
 };

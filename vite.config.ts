@@ -8,6 +8,10 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3000,
       host: '0.0.0.0',
+      headers: {
+        // add ws: so Vite HMR websocket can connect, plus allow localhost proxy port
+        'Content-Security-Policy': "default-src 'self'; connect-src 'self' http://localhost:3001 ws:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+      }
     },
     plugins: [react()],
     define: {
@@ -18,6 +22,12 @@ export default defineConfig(({ mode }) => {
       alias: {
         '@': path.resolve(__dirname, '.'),
       }
+    },
+    build: {
+      target: 'esnext'
+    },
+    optimizeDeps: {
+      exclude: ['pdfjs-dist']
     }
   };
 });

@@ -7,7 +7,19 @@ export const getProxyUrl = () => localStorage.getItem('GEMINI_PROXY_URL') || '';
 const getAI = () => {
   const key = getAIKey();
   if (!key && !getProxyUrl()) throw new Error("Missing Gemini API Key. Please set it in Settings.");
-  return key ? new GoogleGenAI(key) : null;
+  return key ? new GoogleGenAI({ apiKey: key }) : null;
+};
+
+const getResponseText = (response: any): string => {
+  if (typeof response?.text === 'string') return response.text;
+  if (typeof response?.text === 'function') {
+    try {
+      return response.text();
+    } catch {
+      return '';
+    }
+  }
+  return '';
 };
 
 const safeGenerateContent = async (args: { model: string, contents: any, config?: any }) => {
@@ -25,10 +37,12 @@ const safeGenerateContent = async (args: { model: string, contents: any, config?
 
   const ai = getAI();
   if (!ai) throw new Error("AI not initialized");
-  const model = ai.getGenerativeModel({ model: args.model });
-  const result = await model.generateContent(args.config ? { contents: args.contents, ...args.config } : args.contents);
-  const response = await result.response;
-  return { text: response.text(), candidates: response.candidates };
+  const response = await ai.models.generateContent({
+    model: args.model,
+    contents: args.contents,
+    ...(args.config ? { config: args.config } : {}),
+  });
+  return { text: getResponseText(response), candidates: response.candidates };
 };
 
 const pcmToWav = (pcmData: Uint8Array, sampleRate: number = 24000): Blob => {

@@ -15,6 +15,7 @@ app.use(helmet({
         directives: {
             ...helmet.contentSecurityPolicy.getDefaultDirectives(),
             "frame-ancestors": ["'none'"], // Replaces X-Frame-Options
+            "connect-src": ["'self'", "http://localhost:3001"],
         },
     },
     xssFilter: false, // Disables x-xss-protection as requested
@@ -32,7 +33,7 @@ app.use((req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3000;
-const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY || '');
+const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
 app.post('/api/proxy', async (req, res) => {
     try {
@@ -42,13 +43,17 @@ app.post('/api/proxy', async (req, res) => {
             return res.status(400).json({ error: 'Missing model or contents' });
         }
 
-        const aiModel = genAI.getGenerativeModel({ model });
-        const result = await aiModel.generateContent(config ? { contents, ...config } : contents);
-        const response = await result.response;
+        const response = await genAI.models.generateContent({
+            model,
+            contents,
+            ...(config ? { config } : {}),
+        });
 
         // Attempt to extract text if available
         let text = '';
-        try { text = response.text(); } catch (e) { }
+        try {
+            text = typeof response.text === 'function' ? response.text() : (response.text || '');
+        } catch (e) { }
 
         res.json({
             text,
