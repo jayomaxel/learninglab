@@ -27,8 +27,8 @@ const MissionCenter: React.FC<MissionCenterProps> = ({ user, language, onStartTa
     }
     const langName = language === 'FR' ? '法语' : language === 'EN' ? '英语' : '韩语';
     return {
-      title: `${langName}核心词汇`,
-      desc: '基于记忆曲线巩固重点词汇。',
+      title: `${langName}背诵复习`,
+      desc: '进入单词卡片，按记忆曲线复习。',
       target: 'VOCAB',
       icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2'
     };

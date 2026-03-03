@@ -11,6 +11,13 @@ const AUDIO_CACHE_STORE = 'audio_cache';
 
 export class DictionaryDB {
   private db: IDBDatabase | null = null;
+  private waitTransaction(tx: IDBTransaction): Promise<void> {
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }
 
   async init(): Promise<void> {
     if (this.db) return;
@@ -69,6 +76,7 @@ export class DictionaryDB {
     if (!this.db) await this.init();
     const tx = this.db!.transaction(AUDIO_CACHE_STORE, 'readwrite');
     tx.objectStore(AUDIO_CACHE_STORE).put({ key, data });
+    await this.waitTransaction(tx);
   }
 
   async getUsers(): Promise<User[]> {
@@ -84,6 +92,7 @@ export class DictionaryDB {
     if (!this.db) await this.init();
     const tx = this.db!.transaction(USERS_STORE, 'readwrite');
     tx.objectStore(USERS_STORE).put(user);
+    await this.waitTransaction(tx);
   }
 
   async getLogs(language: Language, userId: string): Promise<StudyLog[]> {
@@ -103,6 +112,7 @@ export class DictionaryDB {
     if (!this.db) await this.init();
     const tx = this.db!.transaction(LOGS_STORE, 'readwrite');
     tx.objectStore(LOGS_STORE).put(log);
+    await this.waitTransaction(tx);
   }
 
   async getDictionaries(language: Language): Promise<DictionarySource[]> {
@@ -118,10 +128,88 @@ export class DictionaryDB {
       });
   }
 
+  async getEnabledDictionaryEntries(
+    language: Language,
+    limit: number = 10000
+  ): Promise<(DictionaryEntry & { dictName?: string })[]> {
+    if (!this.db) await this.init();
+    if (limit <= 0) return [];
+
+    const dictionaries = await this.getDictionaries(language);
+    const enabled = dictionaries.filter((dict) => dict.enabled);
+    if (enabled.length === 0) return [];
+
+    const results: (DictionaryEntry & { dictName?: string })[] = [];
+
+    for (const dict of enabled) {
+      const entries = await new Promise<DictionaryEntry[]>((resolve, reject) => {
+        const tx = this.db!.transaction(HUB_ENTRIES_STORE, 'readonly');
+        const store = tx.objectStore(HUB_ENTRIES_STORE);
+        const index = store.index('dictId');
+        const req = index.getAll(IDBKeyRange.only(dict.id));
+        req.onsuccess = () => resolve((req.result || []) as DictionaryEntry[]);
+        req.onerror = () => reject(req.error);
+      });
+
+      for (const entry of entries) {
+        results.push({
+          ...entry,
+          dictName: dict.name,
+        });
+        if (results.length >= limit) {
+          return results;
+        }
+      }
+    }
+
+    return results;
+  }
+
+  async getDictionaryEntriesByLanguage(
+    language: Language,
+    options?: { includeDisabled?: boolean; limit?: number }
+  ): Promise<(DictionaryEntry & { dictName?: string; dictEnabled?: boolean; dictType?: DictionarySource['type'] })[]> {
+    if (!this.db) await this.init();
+    const includeDisabled = options?.includeDisabled ?? true;
+    const limit = options?.limit ?? 50000;
+    if (limit <= 0) return [];
+
+    const dictionaries = await this.getDictionaries(language);
+    const targets = includeDisabled ? dictionaries : dictionaries.filter((dict) => dict.enabled);
+    if (targets.length === 0) return [];
+
+    const results: (DictionaryEntry & { dictName?: string; dictEnabled?: boolean; dictType?: DictionarySource['type'] })[] = [];
+    for (const dict of targets) {
+      const entries = await new Promise<DictionaryEntry[]>((resolve, reject) => {
+        const tx = this.db!.transaction(HUB_ENTRIES_STORE, 'readonly');
+        const store = tx.objectStore(HUB_ENTRIES_STORE);
+        const index = store.index('dictId');
+        const req = index.getAll(IDBKeyRange.only(dict.id));
+        req.onsuccess = () => resolve((req.result || []) as DictionaryEntry[]);
+        req.onerror = () => reject(req.error);
+      });
+
+      for (const entry of entries) {
+        results.push({
+          ...entry,
+          dictName: dict.name,
+          dictEnabled: dict.enabled,
+          dictType: dict.type,
+        });
+        if (results.length >= limit) {
+          return results;
+        }
+      }
+    }
+
+    return results;
+  }
+
   async updateDictionaryMeta(dict: DictionarySource): Promise<void> {
       if (!this.db) await this.init();
       const tx = this.db!.transaction(DICT_META_STORE, 'readwrite');
       tx.objectStore(DICT_META_STORE).put(dict);
+      await this.waitTransaction(tx);
   }
 
   async createDictionary(name: string, language: Language, type: 'IMPORTED' | 'SYSTEM' = 'IMPORTED'): Promise<string> {
@@ -134,28 +222,74 @@ export class DictionaryDB {
       return id;
   }
 
-  async importBatchToDict(entries: Partial<DictionaryEntry>[], dictId: string): Promise<void> {
+  async importBatchToDict(entries: Partial<DictionaryEntry>[], dictId: string): Promise<{ inserted: number; duplicates: number }> {
     if (!this.db) await this.init();
-    return new Promise((resolve, reject) => {
-        const tx = this.db!.transaction([HUB_ENTRIES_STORE, DICT_META_STORE], 'readwrite');
-        const store = tx.objectStore(HUB_ENTRIES_STORE);
-        entries.forEach(entry => {
-            if (entry.word) {
-                store.put({ dictId, word: entry.word.toLowerCase().trim(), translation: entry.translation || '', metadata: entry.metadata });
-            }
+
+    const normalizedByWord = new Map<string, Partial<DictionaryEntry>>();
+    for (const entry of entries) {
+      if (!entry.word) continue;
+      const normalizedWord = entry.word.toLowerCase().trim();
+      if (!normalizedWord) continue;
+      normalizedByWord.set(normalizedWord, {
+        ...entry,
+        word: normalizedWord,
+      });
+    }
+    const uniqueEntries = Array.from(normalizedByWord.values());
+
+    let inserted = 0;
+    let duplicates = 0;
+
+    await new Promise<void>((resolve, reject) => {
+      const tx = this.db!.transaction(HUB_ENTRIES_STORE, 'readwrite');
+      const store = tx.objectStore(HUB_ENTRIES_STORE);
+
+      uniqueEntries.forEach((entry) => {
+        const req = store.add({
+          dictId,
+          word: entry.word,
+          translation: entry.translation || '',
+          metadata: entry.metadata
         });
+
+        req.onsuccess = () => {
+          inserted += 1;
+        };
+
+        req.onerror = (event) => {
+          const errorName = req.error?.name;
+          if (errorName === 'ConstraintError') {
+            duplicates += 1;
+            // Keep transaction alive for expected duplicate keys.
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        };
+      });
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+
+    if (inserted > 0) {
+      await new Promise<void>((resolve, reject) => {
+        const tx = this.db!.transaction(DICT_META_STORE, 'readwrite');
         const metaStore = tx.objectStore(DICT_META_STORE);
         const getMeta = metaStore.get(dictId);
         getMeta.onsuccess = () => {
-            if (getMeta.result) {
-                const meta = getMeta.result;
-                meta.count += entries.length;
-                metaStore.put(meta);
-            }
+          if (getMeta.result) {
+            const meta = getMeta.result;
+            meta.count = (meta.count || 0) + inserted;
+            metaStore.put(meta);
+          }
         };
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
-    });
+      });
+    }
+
+    return { inserted, duplicates };
   }
 
   async clearDictionaryEntries(dictId: string): Promise<void> {
@@ -188,17 +322,28 @@ export class DictionaryDB {
 
   async deleteDictionary(dictId: string): Promise<void> {
     if (!this.db) await this.init();
-    const tx = this.db!.transaction([DICT_META_STORE, HUB_ENTRIES_STORE], 'readwrite');
-    tx.objectStore(DICT_META_STORE).delete(dictId);
-    const index = tx.objectStore(HUB_ENTRIES_STORE).index('dictId');
-    const req = index.openKeyCursor(IDBKeyRange.only(dictId));
-    req.onsuccess = () => {
-      const cursor = req.result;
-      if (cursor) {
-        tx.objectStore(HUB_ENTRIES_STORE).delete(cursor.primaryKey);
-        cursor.continue();
-      }
-    };
+    return new Promise((resolve, reject) => {
+      const tx = this.db!.transaction([DICT_META_STORE, HUB_ENTRIES_STORE], 'readwrite');
+      const entryStore = tx.objectStore(HUB_ENTRIES_STORE);
+      const metaStore = tx.objectStore(DICT_META_STORE);
+
+      metaStore.delete(dictId);
+
+      const index = entryStore.index('dictId');
+      const req = index.openKeyCursor(IDBKeyRange.only(dictId));
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (cursor) {
+          entryStore.delete(cursor.primaryKey);
+          cursor.continue();
+        }
+      };
+      req.onerror = () => reject(req.error);
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
   }
 }
 

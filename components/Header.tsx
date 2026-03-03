@@ -37,12 +37,23 @@ const Header: React.FC<HeaderProps> = ({
         <nav className="flex items-center bg-green-50 rounded-lg border border-green-100 p-1">
           {(['MISSION', 'LISTENING', 'READER', 'VOCAB', 'STATS'] as const).map((tab) => (
              <button key={tab} onClick={() => onTabChange(tab)} className={`px-3 py-1.5 rounded-md text-xs font-bold ${currentTab === tab ? 'bg-white text-green-600 border border-green-100' : 'text-slate-500 hover:text-green-700'}`}>
-              {tab === 'MISSION' ? '主页' : tab === 'LISTENING' ? '听力' : tab === 'READER' ? '阅读' : tab === 'VOCAB' ? '词汇' : '统计'}
+              {tab === 'MISSION' ? '主页' : tab === 'LISTENING' ? '听力' : tab === 'READER' ? '阅读' : tab === 'VOCAB' ? '背诵' : '统计'}
             </button>
           ))}
         </nav>
 
         <div className="flex items-center gap-3">
+          <button
+            onClick={onOpenSettings}
+            className="w-10 h-10 rounded-full bg-white border border-green-200 flex items-center justify-center text-slate-500 hover:text-green-700 hover:border-green-300"
+            title="打开设置"
+            aria-label="打开设置"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317a1 1 0 011.35-.936l1.013.405a1 1 0 00.938-.055l.906-.604a1 1 0 011.257.151l1.414 1.414a1 1 0 01.15 1.257l-.603.906a1 1 0 00-.056.938l.405 1.013a1 1 0 01-.936 1.35h-1.022a1 1 0 00-.894.553l-.455.91a1 1 0 01-.894.553h-2a1 1 0 01-.894-.553l-.455-.91a1 1 0 00-.894-.553H6.84a1 1 0 01-.936-1.35l.405-1.013a1 1 0 00-.056-.938l-.603-.906a1 1 0 01.15-1.257l1.414-1.414a1 1 0 011.257-.15l.906.603a1 1 0 00.938.056l1.013-.405z" />
+              <circle cx="12" cy="12" r="3" strokeWidth={2} />
+            </svg>
+          </button>
           <div className="hidden md:flex bg-green-50 p-1 rounded-lg border border-green-100">
             {(['EN', 'FR', 'KR'] as Language[]).map((lang) => (
               <button key={lang} onClick={() => onLanguageChange(lang)} className={`w-10 py-1 rounded text-xs font-bold ${language === lang ? 'bg-white text-green-600 border border-green-100' : 'text-slate-400 hover:text-green-600'}`}>

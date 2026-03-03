@@ -1,7 +1,7 @@
-
+﻿
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Language, TranscriptionSegment, DifficultyAnalysis, CEFRLevel } from '../types';
-import { generateAIPractice, generatePracticeFromUrl, analyzeTextDifficulty } from '../services/gemini';
+import { generateAIPractice, generatePracticeFromUrl, analyzeTextDifficulty, isRateLimitError } from '../services/gemini';
 import { db } from '../services/db';
 import DifficultyWarmup from './DifficultyWarmup';
 
@@ -40,6 +40,7 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const loopAnchorTimeRef = useRef<number | null>(null);
+  const localObjectUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (mediaUrl) {
@@ -98,6 +99,41 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
 
   const segmentWords = useMemo(() => (!currentSegment ? [] : currentSegment.text.trim().split(/\s+/)), [currentSegment]);
 
+  const clearLocalObjectUrl = useCallback(() => {
+    if (localObjectUrlRef.current) {
+      URL.revokeObjectURL(localObjectUrlRef.current);
+      localObjectUrlRef.current = null;
+    }
+  }, []);
+
+  const resetPracticeState = useCallback(() => {
+    setCurrentIndex(0);
+    setShowHint(false);
+    setAnalysisResult(null);
+    setShowWarmup(false);
+    setWordInputs([]);
+    setWordResults([]);
+    setIsFullPlaying(false);
+    sessionStartTimeRef.current = Date.now();
+    correctWordsCountRef.current = 0;
+    totalWordsCountRef.current = 0;
+  }, []);
+
+  const handleLocalMediaUpload = useCallback((file: File) => {
+    clearLocalObjectUrl();
+    const objectUrl = URL.createObjectURL(file);
+    localObjectUrlRef.current = objectUrl;
+    setMediaUrl(objectUrl);
+    setSegments([]);
+    resetPracticeState();
+  }, [clearLocalObjectUrl, resetPracticeState]);
+
+  useEffect(() => {
+    return () => {
+      clearLocalObjectUrl();
+    };
+  }, [clearLocalObjectUrl]);
+
   useEffect(() => {
     if (segmentWords.length > 0) {
       setWordInputs(new Array(segmentWords.length).fill(''));
@@ -115,8 +151,8 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
     if (totalWords > 0) {
       await db.logSession({ id: Date.now().toString(), userId, type: 'DICTATION', language, score: accuracy, duration, timestamp: endTime });
       onTaskComplete?.();
-      alert(`练习结束！正确率: ${accuracy}%`);
-    } else { alert("练习结束！"); }
+      alert(`缁冧範缁撴潫锛佹纭巼: ${accuracy}%`);
+    } else { alert("练习结束。"); }
     sessionStartTimeRef.current = Date.now();
     correctWordsCountRef.current = 0;
     totalWordsCountRef.current = 0;
@@ -126,7 +162,7 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
     const video = videoRef.current;
     if (!video) return;
 
-    video.preservesPitch = true; // 确保变速不变调
+    video.preservesPitch = true; // 纭繚鍙橀€熶笉鍙樿皟
 
     const loop = () => {
       if (showWarmup) { if (!video.paused) video.pause(); return; }
@@ -202,7 +238,7 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
     lastKeystrokeTimeRef.current = Date.now();
   }, [currentIndex, segments, showWarmup]);
 
-  const normalize = (word: string) => word.toLowerCase().replace(/[.,!?;:()"'«»]/g, '').trim();
+  const normalize = (word: string) => word.toLowerCase().replace(/[.,!?;:()"'芦禄]/g, '').trim();
 
   const handleWordChange = (index: number, value: string) => {
     const now = Date.now();
@@ -248,29 +284,47 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
     try {
       let result = inputMode === 'PROMPT' ? await generateAIPractice(aiPrompt, language, level) : await generatePracticeFromUrl(urlInput, language, level);
       if (result?.audioUrl) {
+        clearLocalObjectUrl();
         setMediaUrl(result.audioUrl);
         setSegments(result.segments);
-        setCurrentIndex(0);
-        setShowHint(false);
-        setAnalysisResult(null);
-        setShowWarmup(false);
+        resetPracticeState();
       }
-    } catch (err) { alert("AI 生成失败。"); } finally { setLoading(false); }
+    } catch (err) {
+      if (!isRateLimitError(err)) {
+        alert("AI 生成失败，请稍后重试。");
+      }
+    } finally { setLoading(false); }
   };
 
   return (
     <section className="space-y-6">
       {showWarmup && analysisResult && (
-        <DifficultyWarmup analysis={analysisResult} onProceed={() => setShowWarmup(false)} onCancel={() => { setShowWarmup(false); setMediaUrl(null); setSegments([]); }} />
+        <DifficultyWarmup
+          analysis={analysisResult}
+          onProceed={() => setShowWarmup(false)}
+          onCancel={() => {
+            setShowWarmup(false);
+            clearLocalObjectUrl();
+            setMediaUrl(null);
+            setSegments([]);
+            resetPracticeState();
+          }}
+        />
       )}
 
       <div className="bg-white p-6 rounded-xl border border-green-200 space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex bg-green-50 p-1 rounded-lg border border-green-100">
-            <button onClick={() => setInputMode('PROMPT')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${inputMode === 'PROMPT' ? 'bg-white text-green-600 border border-green-100' : 'text-slate-500 hover:text-slate-900'}`}>主题生成</button>
-            <button onClick={() => setInputMode('URL')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${inputMode === 'URL' ? 'bg-white text-green-600 border border-green-100' : 'text-slate-500 hover:text-slate-900'}`}>链接解析</button>
+            <button onClick={() => setInputMode('PROMPT')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${inputMode === 'PROMPT' ? 'bg-white text-green-600 border border-green-100' : 'text-slate-500 hover:text-slate-900'}`}>涓婚鐢熸垚</button>
+            <button onClick={() => setInputMode('URL')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${inputMode === 'URL' ? 'bg-white text-green-600 border border-green-100' : 'text-slate-500 hover:text-slate-900'}`}>閾炬帴瑙ｆ瀽</button>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="px-4 py-2 rounded-lg text-xs font-bold bg-white text-green-600 border border-green-200"
+            >
+              涓婁紶鏈湴濯掍綋
+            </button>
             <button onClick={() => setFlowMode(!flowMode)} className={`px-4 py-2 rounded-lg text-xs font-bold border ${flowMode ? 'bg-green-50 text-green-600 border-green-200' : 'bg-white text-slate-500 border-green-100'}`}>
               Flow Sync {flowMode ? 'ON' : 'OFF'}
             </button>
@@ -278,17 +332,28 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
               {isFullPlaying ? '正在听写' : '开始听写'}
             </button>
           </div>
+          <input
+            type="file"
+            ref={fileInputRef}
+            accept="audio/*,video/*,.mp3,.wav,.m4a,.aac,.ogg,.mp4,.webm,.mov"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleLocalMediaUpload(file);
+              e.currentTarget.value = '';
+            }}
+          />
         </div>
 
         <div className="flex items-center gap-3 bg-green-50 p-1 rounded-lg border border-green-100">
           <input
             value={inputMode === 'PROMPT' ? aiPrompt : urlInput}
             onChange={(e) => inputMode === 'PROMPT' ? setAiPrompt(e.target.value) : setUrlInput(e.target.value)}
-            placeholder={inputMode === 'PROMPT' ? "输入练习主题..." : "粘贴媒体链接..."}
+            placeholder={inputMode === 'PROMPT' ? "杈撳叆缁冧範涓婚..." : "绮樿创濯掍綋閾炬帴..."}
             className="flex-1 bg-transparent border-none px-4 py-2 text-sm outline-none font-medium text-slate-900"
           />
           <button onClick={handleAISubmit} disabled={loading} className="bg-green-600 text-white px-6 py-2 rounded-lg text-xs font-bold disabled:opacity-50">
-            {loading ? '处理中' : '生成素材'}
+            {loading ? '处理中...' : '生成素材'}
           </button>
         </div>
       </div>
@@ -297,12 +362,11 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
         <div className="lg:col-span-7 space-y-6">
           <div className="bg-green-50 rounded-2xl aspect-video relative flex items-center justify-center border border-green-100">
             {mediaUrl ? (
-              <video key={mediaUrl} ref={videoRef} src={mediaUrl} className="w-full h-full object-contain" controls={isFullPlaying} />
+              <video key={mediaUrl} ref={videoRef} src={mediaUrl} className="w-full h-full object-contain" controls={isFullPlaying || segments.length === 0} />
             ) : (
               <div className="text-center p-8">
-                <p className="text-slate-500 font-bold mb-4">暂无素材，请先生成或上传</p>
-                <button onClick={() => fileInputRef.current?.click()} className="px-6 py-2 bg-white text-green-600 rounded-lg text-xs font-bold border border-green-200">上传媒体文件</button>
-                <input type="file" ref={fileInputRef} className="hidden" onChange={(e) => e.target.files?.[0] && setMediaUrl(URL.createObjectURL(e.target.files[0]))} />
+                <p className="text-slate-500 font-bold mb-4">鏆傛棤绱犳潗锛岃鍏堢敓鎴愭垨涓婁紶</p>
+                <button onClick={() => fileInputRef.current?.click()} className="px-6 py-2 bg-white text-green-600 rounded-lg text-xs font-bold border border-green-200">涓婁紶濯掍綋鏂囦欢</button>
               </div>
             )}
           </div>
@@ -310,10 +374,10 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
           {currentSegment && (
             <div className="bg-white p-6 rounded-xl border border-green-200 border-l-4 border-l-green-500">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-bold text-green-600 uppercase tracking-widest">中文译文</span>
-                <button onClick={() => setShowHint(!showHint)} className="text-[10px] font-bold text-slate-400 hover:text-slate-600">{showHint ? "隐藏原文" : "提示原文"}</button>
+                <span className="text-[10px] font-bold text-green-600 uppercase tracking-widest">涓枃璇戞枃</span>
+                <button onClick={() => setShowHint(!showHint)} className="text-[10px] font-bold text-slate-400 hover:text-slate-600">{showHint ? "闅愯棌鍘熸枃" : "鎻愮ず鍘熸枃"}</button>
               </div>
-              <p className="text-lg text-slate-800 font-bold leading-relaxed">{currentSegment.translation || '（暂无翻译）'}</p>
+              <p className="text-lg text-slate-800 font-bold leading-relaxed">{currentSegment.translation || '锛堟殏鏃犵炕璇戯級'}</p>
               {showHint && (
                 <div className="bg-green-50 p-3 rounded-lg mt-3 border border-green-100">
                   <p className="text-sm text-slate-600 italic">
@@ -345,7 +409,7 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
                     <div key={i} className={`h-1.5 rounded-full ${i <= currentIndex ? 'bg-green-500 w-4' : 'bg-green-100 w-1.5'}`} />
                   ))}
                 </div>
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">句 {currentIndex + 1} / {segments.length}</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">鍙?{currentIndex + 1} / {segments.length}</span>
               </div>
               <div className="flex-1 flex flex-wrap gap-2 justify-center py-4">
                 {segmentWords.map((word, idx) => (
@@ -362,13 +426,18 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
                 ))}
               </div>
               <div className="mt-8 grid grid-cols-2 gap-4">
-                <button onClick={playCurrentSegment} className="py-3 bg-green-600 text-white rounded-xl font-bold">重听句子</button>
-                <button onClick={() => currentIndex < segments.length - 1 && setCurrentIndex(prev => prev + 1)} className="py-3 bg-slate-100 text-slate-600 rounded-xl font-bold">跳过</button>
+                <button onClick={playCurrentSegment} className="py-3 bg-green-600 text-white rounded-xl font-bold">閲嶅惉鍙ュ瓙</button>
+                <button onClick={() => currentIndex < segments.length - 1 && setCurrentIndex(prev => prev + 1)} className="py-3 bg-slate-100 text-slate-600 rounded-xl font-bold">璺宠繃</button>
               </div>
+            </div>
+          ) : mediaUrl ? (
+            <div className="flex-1 bg-white rounded-2xl border border-green-200 flex flex-col items-center justify-center p-12 text-center h-full">
+              <p className="text-slate-600 font-bold mb-2">媒体已上传</p>
+              <p className="text-slate-400 text-sm">当前没有可听写分段。你可以直接播放媒体，或者在上方用 AI 生成听写内容。</p>
             </div>
           ) : (
             <div className="flex-1 bg-white rounded-2xl border-2 border-dashed border-green-100 flex flex-col items-center justify-center p-12 text-center h-full">
-              <p className="text-slate-400 font-bold">请加载素材开始听力实验室</p>
+              <p className="text-slate-400 font-bold">请先上传媒体或生成素材开始练习</p>
             </div>
           )}
         </div>
@@ -378,3 +447,4 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
 };
 
 export default ListeningLab;
+

@@ -5,6 +5,7 @@ import { Language, DictionarySource } from '../types';
 import { db } from '../services/db';
 import { downloadAndImportDictionary } from '../services/sync';
 import { DictionaryImportDeduper } from '../services/dictionaryDedup';
+import { checkProxyHealth } from '../services/gemini';
 
 interface SettingsModalProps {
     onClose: () => void;
@@ -20,26 +21,49 @@ const RECOMMENDED_DICTS: Record<Language, { name: string, url: string, size: str
     'FR': []
 };
 
-const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLanguage }) => {
+type SettingsTab = Language | 'API';
+const SETTINGS_TAB_KEY = 'settings_modal_selected_tab';
+const VALID_TABS: SettingsTab[] = ['EN', 'FR', 'KR', 'API'];
+
+const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLanguage, onCacheRefreshNeeded }) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState(0);
     const [status, setStatus] = useState('');
 
-    const [selectedTab, setSelectedTab] = useState<Language>(currentAppLanguage);
+    const initialTab = (() => {
+        const saved = localStorage.getItem(SETTINGS_TAB_KEY) as SettingsTab | null;
+        if (saved && VALID_TABS.includes(saved))
+            return saved;
+        return currentAppLanguage;
+    })();
+
+    const [selectedTab, setSelectedTab] = useState<SettingsTab>(initialTab);
     const [dictionaries, setDictionaries] = useState<DictionarySource[]>([]);
     const [newDictName, setNewDictName] = useState('');
     const [importMode, setImportMode] = useState(false);
+    const [proxyCheckLoading, setProxyCheckLoading] = useState(false);
+    const [proxyCheckMessage, setProxyCheckMessage] = useState('');
 
     // Preview State
     const [previewData, setPreviewData] = useState<{ word: string, translation: string }[] | null>(null);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
     useEffect(() => {
+        if (selectedTab === 'API')
+            return;
         loadDictionaries();
     }, [selectedTab]);
 
+    useEffect(() => {
+        localStorage.setItem(SETTINGS_TAB_KEY, selectedTab);
+    }, [selectedTab]);
+
     const loadDictionaries = async () => {
+        if (selectedTab === 'API') {
+            setDictionaries([]);
+            return;
+        }
         const list = await db.getDictionaries(selectedTab);
         setDictionaries(list);
     };
@@ -61,6 +85,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
     };
 
     const handleDownloadDict = async (url: string, name: string) => {
+        if (selectedTab === 'API')
+            return;
         setLoading(true);
         setStatus("Initializing Stream...");
         setProgress(0);
@@ -69,6 +95,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                 setStatus(msg);
                 setProgress(pct);
             });
+            onCacheRefreshNeeded();
             loadDictionaries();
             setTimeout(() => setLoading(false), 1500);
         } catch (e: any) {
@@ -79,6 +106,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
 
     const confirmImport = async () => {
         if (!selectedFile) return;
+        if (selectedTab === 'API') return;
 
         setLoading(true);
         setProgress(0);
@@ -101,8 +129,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                     const { entries, dropped } = deduper.dedupeBatch(batch);
                     droppedCount += dropped;
                     if (entries.length > 0) {
-                        importedCount += entries.length;
-                        await db.importBatchToDict(entries, dictId);
+                        const { inserted, duplicates } = await db.importBatchToDict(entries, dictId);
+                        importedCount += inserted;
+                        droppedCount += duplicates;
                     }
                 }
             );
@@ -117,6 +146,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
             setStatus(
                 `Success! ${importedCount.toLocaleString()} unique terms imported, ${droppedCount.toLocaleString()} duplicates skipped (raw ${total.toLocaleString()}).`
             );
+            onCacheRefreshNeeded();
             setTimeout(() => {
                 setImportMode(false);
                 setLoading(false);
@@ -137,19 +167,51 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
     const toggleDictionary = async (dict: DictionarySource) => {
         const updated = { ...dict, enabled: !dict.enabled };
         await db.updateDictionaryMeta(updated);
+        onCacheRefreshNeeded();
         loadDictionaries();
+    };
+
+    const handleProxyCheck = async () => {
+        const proxyUrl = (localStorage.getItem('GEMINI_PROXY_URL') || '').trim();
+        setProxyCheckLoading(true);
+        setProxyCheckMessage('');
+        try {
+            const result = await checkProxyHealth(proxyUrl);
+            if (result.ok) {
+                setProxyCheckMessage(`连接成功：${result.url}`);
+            } else {
+                const reason = result.body?.error || `HTTP ${result.status}`;
+                setProxyCheckMessage(`连接失败：${reason}`);
+            }
+        } catch (err: any) {
+            setProxyCheckMessage(`连接失败：${err?.message || 'Unknown error'}`);
+        } finally {
+            setProxyCheckLoading(false);
+        }
     };
 
     const deleteDictionary = async (dict: DictionarySource) => {
         if (!confirm(`Warning: This action is irreversible.\n\nPermanently delete "${dict.name}" and all its ${dict.count.toLocaleString()} entries?`)) return;
-        await db.deleteDictionary(dict.id);
-        loadDictionaries();
+        try {
+            await db.deleteDictionary(dict.id);
+            onCacheRefreshNeeded();
+            await loadDictionaries();
+            setStatus(`Deleted "${dict.name}".`);
+        } catch (err: any) {
+            setStatus(`Delete failed: ${err?.message || 'Unknown error'}`);
+        }
     };
 
     const clearDictionary = async (dict: DictionarySource) => {
         if (!confirm(`Clear all ${dict.count.toLocaleString()} entries from "${dict.name}"? Metadata (name/priority) will remain.`)) return;
-        await db.clearDictionaryEntries(dict.id);
-        loadDictionaries();
+        try {
+            await db.clearDictionaryEntries(dict.id);
+            onCacheRefreshNeeded();
+            await loadDictionaries();
+            setStatus(`Cleared entries in "${dict.name}".`);
+        } catch (err: any) {
+            setStatus(`Clear failed: ${err?.message || 'Unknown error'}`);
+        }
     };
 
     const movePriority = async (index: number, direction: 'up' | 'down') => {
@@ -207,8 +269,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                         ))}
                         <div className="h-px w-10 bg-slate-200 my-2" />
                         <button
-                            onClick={() => setSelectedTab('API' as any)}
-                            className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${selectedTab === 'API' as any ? 'bg-white shadow-lg text-indigo-600 scale-110 border border-indigo-100' : 'text-slate-400 hover:text-slate-600'}`}
+                            onClick={() => setSelectedTab('API')}
+                            className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${selectedTab === 'API' ? 'bg-white shadow-lg text-indigo-600 scale-110 border border-indigo-100' : 'text-slate-400 hover:text-slate-600'}`}
                         >
                             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
                         </button>
@@ -216,7 +278,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
 
                     {/* Content */}
                     <div className="flex-1 flex flex-col bg-slate-50/50 relative overflow-y-auto">
-                        {selectedTab === 'API' as any ? (
+                        {selectedTab === 'API' ? (
                             <div className="p-8 space-y-8 animate-in fade-in slide-in-from-bottom-2">
                                 <div>
                                     <h4 className="text-xl font-black text-slate-800 flex items-center gap-2">
@@ -269,6 +331,19 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                             className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono outline-none focus:border-indigo-500"
                                         />
                                         <p className="text-[10px] text-slate-400">Sent as Authorization Bearer token when GEMINI_PROXY_URL is enabled.</p>
+                                    </div>
+
+                                    <div className="pt-2">
+                                        <button
+                                            onClick={handleProxyCheck}
+                                            disabled={proxyCheckLoading}
+                                            className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 disabled:opacity-50"
+                                        >
+                                            {proxyCheckLoading ? 'Testing...' : 'Test Proxy Connection'}
+                                        </button>
+                                        {proxyCheckMessage && (
+                                            <p className="mt-2 text-xs text-slate-500">{proxyCheckMessage}</p>
+                                        )}
                                     </div>
                                 </div>
 
@@ -341,6 +416,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                         <div className="bg-white p-4 rounded-2xl border border-indigo-100 shadow-lg mb-4 animate-pulse">
                                             <div className="flex justify-between text-xs font-bold text-indigo-600 mb-2"><span>{status}</span><span>{Math.round(progress)}%</span></div>
                                             <div className="h-2 bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 transition-all duration-300 ease-out" style={{ width: `${progress}%` }}></div></div>
+                                        </div>
+                                    )}
+                                    {!loading && status && (
+                                        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm mb-4 text-xs text-slate-600">
+                                            {status}
                                         </div>
                                     )}
 
@@ -438,12 +518,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                                     </label>
 
                                                     <div className="flex items-center gap-1">
-                                                        {dict.type !== 'USER' && (
-                                                            <button onClick={() => clearDictionary(dict)} className="p-2 text-slate-300 hover:text-orange-500 transition-colors" title="Clear Entries">
-                                                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                                            </button>
-                                                        )}
-                                                        <button onClick={() => deleteDictionary(dict)} disabled={dict.type === 'USER'} className="p-2 text-slate-300 hover:text-red-600 transition-colors disabled:opacity-0" title="Delete Dictionary">
+                                                        <button onClick={() => clearDictionary(dict)} className="p-2 text-slate-300 hover:text-orange-500 transition-colors" title="Clear Entries">
+                                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                        </button>
+                                                        <button onClick={() => deleteDictionary(dict)} className="p-2 text-slate-300 hover:text-red-600 transition-colors" title="Delete Dictionary">
                                                             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                                                         </button>
                                                     </div>

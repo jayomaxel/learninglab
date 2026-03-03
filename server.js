@@ -24,6 +24,11 @@ app.use(helmet({
 app.use(cors());
 app.use(express.json());
 
+// Chrome DevTools may probe this path in local development.
+app.get('/.well-known/appspecific/com.chrome.devtools.json', (req, res) => {
+    res.status(204).end();
+});
+
 // Content-Type & Cache Middleware
 app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -32,7 +37,7 @@ app.use((req, res, next) => {
     next();
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const PROXY_AUTH_TOKEN = process.env.PROXY_AUTH_TOKEN || '';
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60000);
@@ -138,6 +143,20 @@ app.post('/api/proxy', authMiddleware, rateLimitMiddleware, async (req, res) => 
         console.error('Proxy Error:', error);
         res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown proxy error' });
     }
+});
+
+app.get('/api/health', (req, res) => {
+    res.json({
+        ok: true,
+        service: 'gemini-proxy',
+        port: Number(PORT),
+        authConfigured: Boolean(PROXY_AUTH_TOKEN),
+        geminiKeyConfigured: Boolean(GEMINI_API_KEY),
+        rateLimit: {
+            windowMs: RATE_LIMIT_WINDOW_MS,
+            maxRequests: RATE_LIMIT_MAX_REQUESTS
+        }
+    });
 });
 
 app.listen(PORT, () => {

@@ -4,13 +4,25 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
+  const devCsp = [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "connect-src 'self' http://localhost:3001 ws: wss:",
+    // Vite + React fast refresh injects inline preamble in dev.
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "img-src 'self' data: blob:"
+  ].join('; ');
+
   return {
     server: {
       port: 3000,
       host: '0.0.0.0',
       headers: {
-        // add ws: so Vite HMR websocket can connect, plus allow localhost proxy port
-        'Content-Security-Policy': "default-src 'self'; connect-src 'self' http://localhost:3001 ws:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+        'Content-Security-Policy': devCsp
       }
     },
     plugins: [react()],

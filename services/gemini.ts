@@ -1,9 +1,39 @@
-import { GoogleGenAI, Type, Modality } from "@google/genai";
+﻿import { GoogleGenAI, Type, Modality } from "@google/genai";
 import { TranscriptionSegment, Language, DifficultyAnalysis, CEFRLevel } from "../types";
 
 export const getAIKey = () => localStorage.getItem('GEMINI_API_KEY') || (import.meta as any).env?.VITE_GEMINI_KEY || '';
-export const getProxyUrl = () => localStorage.getItem('GEMINI_PROXY_URL') || '';
+const getDefaultProxyUrl = () => {
+  if (typeof window === 'undefined') return '';
+  const hostname = window.location.hostname;
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    return 'http://localhost:3001/api/proxy';
+  }
+  return '';
+};
+export const getProxyUrl = () =>
+  localStorage.getItem('GEMINI_PROXY_URL')
+  || (import.meta as any).env?.VITE_GEMINI_PROXY_URL
+  || getDefaultProxyUrl();
 export const getProxyToken = () => localStorage.getItem('GEMINI_PROXY_TOKEN') || '';
+export const isRateLimitError = (error: unknown): boolean => {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes('429') || message.includes('too many requests') || message.includes('rate limit');
+};
+let lastRateLimitToastAt = 0;
+
+const emitToast = (message: string) => {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('app-toast', { detail: { message } }));
+};
+
+const notifyRateLimited = (retryAfterSec: string | null) => {
+  const now = Date.now();
+  if (now - lastRateLimitToastAt < 5000) return;
+  lastRateLimitToastAt = now;
+  const suffix = retryAfterSec ? `（约 ${retryAfterSec} 秒后重试）` : '';
+  emitToast(`学习太热情了，请休息 1 分钟再试。${suffix}`);
+};
 
 const getAI = () => {
   const key = getAIKey();
@@ -45,6 +75,9 @@ const safeGenerateContent = async (args: { model: string, contents: any, config?
     }
 
     if (!response.ok) {
+      if (response.status === 429) {
+        notifyRateLimited(response.headers.get('Retry-After'));
+      }
       throw new Error(data.error || `Proxy request failed (${response.status})`);
     }
 
@@ -60,6 +93,43 @@ const safeGenerateContent = async (args: { model: string, contents: any, config?
     ...(args.config ? { config: args.config } : {}),
   });
   return { text: getResponseText(response), candidates: response.candidates };
+};
+
+const deriveHealthUrl = (proxyUrl: string): string => {
+  try {
+    const u = new URL(proxyUrl);
+    if (u.pathname.endsWith('/api/proxy')) {
+      u.pathname = u.pathname.replace(/\/api\/proxy$/, '/api/health');
+    } else {
+      const basePath = u.pathname.endsWith('/') ? u.pathname.slice(0, -1) : u.pathname;
+      u.pathname = `${basePath}/api/health`;
+    }
+    return u.toString();
+  } catch {
+    return '';
+  }
+};
+
+export const checkProxyHealth = async (overrideProxyUrl?: string): Promise<{ ok: boolean; status: number; body: any; url: string }> => {
+  const proxyUrl = (overrideProxyUrl || getProxyUrl()).trim();
+  if (!proxyUrl) {
+    return { ok: false, status: 0, body: { error: 'GEMINI_PROXY_URL is empty' }, url: '' };
+  }
+
+  const healthUrl = deriveHealthUrl(proxyUrl);
+  if (!healthUrl) {
+    return { ok: false, status: 0, body: { error: 'Invalid GEMINI_PROXY_URL' }, url: '' };
+  }
+
+  const response = await fetch(healthUrl, { method: 'GET' });
+  let body: any = {};
+  try {
+    body = await response.json();
+  } catch {
+    body = {};
+  }
+
+  return { ok: response.ok, status: response.status, body, url: healthUrl };
 };
 
 const pcmToWav = (pcmData: Uint8Array, sampleRate: number = 24000): Blob => {

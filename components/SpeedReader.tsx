@@ -1,4 +1,4 @@
-
+﻿
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Language, DifficultyAnalysis, CEFRLevel } from '../types';
 import { translateText, fetchReadingMaterial, analyzeTextDifficulty } from '../services/gemini';
@@ -54,6 +54,7 @@ const SpeedReader: React.FC<SpeedReaderProps> = ({ language, onSaveWord, knownWo
   const [aiInput, setAiInput] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
   const leftRef = useRef<HTMLDivElement>(null);
   const pivotRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
@@ -145,15 +146,33 @@ const SpeedReader: React.FC<SpeedReaderProps> = ({ language, onSaveWord, knownWo
       setTranslation(resp);
       await db.logSession({ id: Date.now().toString(), userId, type: 'READER', language, score: 1, duration: 0, timestamp: Date.now() });
       onTaskComplete?.();
-    } catch (err) { setTranslation("翻译失败。"); } finally { setTranslating(false); }
+    } catch (err) { setTranslation("翻译失败，请稍后重试。"); } finally { setTranslating(false); }
   }, [text, userId, onTaskComplete]);
+  const handleGenerateReading = useCallback(async () => {
+    if (!aiInput.trim()) return;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const result = await fetchReadingMaterial(aiInput, language);
+      setText(result.text || '');
+      setTranslation(null);
+      setChunks([]);
+      stateRef.current.chunks = [];
+      setCurrentChunkIdx(-1);
+      setIsPlaying(false);
+    } catch (err: any) {
+      setLoadError(err?.message || '素材生成失败，请稍后再试。');
+    } finally {
+      setLoading(false);
+    }
+  }, [aiInput, language]);
 
   const calculateDelay = useCallback((chunk: string) => {
     const baseDelay = (60 / wpm) * 1000 * chunk.split(' ').length;
     let multiplier = 1.0;
     if (chunk.length > 8) multiplier *= 1.2;
-    if (/[，,]$/.test(chunk)) multiplier *= 2.0;
-    if (/[.！？!？]$/.test(chunk)) multiplier *= 3.0;
+    if (/[,:;]$/.test(chunk)) multiplier *= 2.0;
+    if (/[.!?]$/.test(chunk)) multiplier *= 3.0;
     return baseDelay * multiplier;
   }, [wpm]);
 
@@ -192,16 +211,21 @@ const SpeedReader: React.FC<SpeedReaderProps> = ({ language, onSaveWord, knownWo
       <div className="bg-white p-6 rounded-xl border border-green-200 flex flex-wrap gap-4 items-center">
         <input
           value={aiInput} onChange={(e) => setAiInput(e.target.value)}
-          placeholder="输入阅读主题或链接..." className="flex-1 bg-green-50 px-4 py-2 rounded-lg border border-green-100 text-sm"
+          placeholder="杈撳叆闃呰涓婚鎴栭摼鎺?.." className="flex-1 bg-green-50 px-4 py-2 rounded-lg border border-green-100 text-sm"
         />
         <div className="flex gap-2">
-          <button onClick={() => fetchReadingMaterial(aiInput, language).then(r => setText(r.text))} disabled={loading || !aiInput} className="bg-green-600 text-white px-6 py-2 rounded-lg text-xs font-bold disabled:opacity-50">开始提取</button>
+          <button onClick={handleGenerateReading} disabled={loading || !aiInput} className="bg-green-600 text-white px-6 py-2 rounded-lg text-xs font-bold disabled:opacity-50">{loading ? '处理中...' : '开始提取'}</button>
         </div>
       </div>
 
+      {loadError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-600 font-semibold">
+          {loadError}
+        </div>
+      )}
       <div className="bg-white rounded-3xl p-12 border border-green-200 min-h-[350px] flex flex-col justify-between">
         <div className="flex-1 flex items-center justify-center relative">
-          {analyzing ? <span className="text-slate-400 font-bold uppercase tracking-widest">分析中...</span> :
+          {analyzing ? <span className="text-slate-400 font-bold uppercase tracking-widest">鍒嗘瀽涓?..</span> :
             currentChunkIdx >= 0 && currentChunkIdx < chunks.length ? (
               <div className="flex items-baseline justify-center w-full font-mono text-4xl sm:text-6xl text-slate-700">
                 <div ref={leftRef} className="flex-1 text-right"></div>
@@ -209,7 +233,7 @@ const SpeedReader: React.FC<SpeedReaderProps> = ({ language, onSaveWord, knownWo
                 <div ref={rightRef} className="flex-1 text-left"></div>
               </div>
             ) :
-              <span className="text-slate-300 font-bold text-xl italic">准备就绪</span>}
+              <span className="text-slate-300 font-bold text-xl italic">鍑嗗灏辩华</span>}
           <div className="absolute top-0 bottom-0 left-1/2 w-px bg-green-500/10 pointer-events-none" />
         </div>
 
@@ -218,7 +242,7 @@ const SpeedReader: React.FC<SpeedReaderProps> = ({ language, onSaveWord, knownWo
             <div ref={progressBarRef} className="h-full bg-green-500" style={{ width: `0%` }} />
           </div>
           <div className="flex items-center gap-8">
-            <button onClick={() => { setIsPlaying(false); setCurrentChunkIdx(-1); }} className="p-3 bg-slate-50 text-slate-500 rounded-full border border-slate-200">重置</button>
+            <button onClick={() => { setIsPlaying(false); setCurrentChunkIdx(-1); }} className="p-3 bg-slate-50 text-slate-500 rounded-full border border-slate-200">閲嶇疆</button>
             <button onClick={togglePlayback} className={`w-16 h-16 rounded-full flex items-center justify-center ${isPlaying ? 'bg-slate-100 text-slate-800 border border-slate-200' : 'bg-green-500 text-white'}`}>
               {isPlaying ? <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M6 4h4v16H6zM14 4h4v16h-4z" /></svg> : <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>}
             </button>
@@ -237,20 +261,20 @@ const SpeedReader: React.FC<SpeedReaderProps> = ({ language, onSaveWord, knownWo
         <div className="lg:col-span-2 space-y-4">
           <div className="bg-white p-6 rounded-2xl border border-green-200 grid grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase">阅读速度 (WPM): {wpm}</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase">闃呰閫熷害 (WPM): {wpm}</label>
               <input type="range" min="50" max="800" step="25" value={wpm} onChange={(e) => setWpm(parseInt(e.target.value))} className="w-full accent-green-600" />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase">分段大小: {chunkSize}</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase">鍒嗘澶у皬: {chunkSize}</label>
               <div className="flex gap-2">
                 {[1, 2, 3].map(size => <button key={size} onClick={() => setChunkSize(size)} className={`flex-1 py-1 rounded-lg text-xs font-bold ${chunkSize === size ? 'bg-green-500 text-white' : 'bg-green-50 text-green-600'}`}>{size}</button>)}
               </div>
             </div>
           </div>
-          <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="粘贴文本或导入素材..." className="w-full h-64 bg-white border border-green-200 rounded-2xl p-6 text-slate-700 text-lg outline-none focus:border-green-500 resize-none" />
+          <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="绮樿创鏂囨湰鎴栧鍏ョ礌鏉?.." className="w-full h-64 bg-white border border-green-200 rounded-2xl p-6 text-slate-700 text-lg outline-none focus:border-green-500 resize-none" />
         </div>
         <div className="bg-white rounded-2xl p-6 border border-green-200 flex flex-col min-h-[400px]">
-          <button onClick={handleTranslate} disabled={translating} className="w-full py-2 bg-green-50 text-green-700 font-bold rounded-lg border border-green-100 mb-4">{translating ? '翻译中...' : '查看全文翻译'}</button>
+          <button onClick={handleTranslate} disabled={translating} className="w-full py-2 bg-green-50 text-green-700 font-bold rounded-lg border border-green-100 mb-4">{translating ? '缈昏瘧涓?..' : '鏌ョ湅鍏ㄦ枃缈昏瘧'}</button>
           <div className="flex-1 text-sm text-slate-600 leading-relaxed overflow-y-auto">{translation}</div>
         </div>
       </div>
@@ -259,3 +283,6 @@ const SpeedReader: React.FC<SpeedReaderProps> = ({ language, onSaveWord, knownWo
 };
 
 export default SpeedReader;
+
+
+

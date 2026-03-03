@@ -37,8 +37,9 @@ export const downloadAndImportDictionary = async (
                 const { entries, dropped } = deduper.dedupeBatch(batch);
                 droppedCount += dropped;
                 if (entries.length > 0) {
-                    importedCount += entries.length;
-                    await db.importBatchToDict(entries, dictId);
+                    const { inserted, duplicates } = await db.importBatchToDict(entries, dictId);
+                    importedCount += inserted;
+                    droppedCount += duplicates;
                 }
             }
         );

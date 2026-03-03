@@ -7,10 +7,10 @@ export class CuckooFilter {
     count: number = 0;
 
     constructor(capacity: number = 100000, bucketSize: number = 4) {
-        this.capacity = capacity;
-        this.bucketSize = bucketSize;
+        this.capacity = Math.max(1, Math.floor(capacity));
+        this.bucketSize = Math.max(1, Math.floor(bucketSize));
         this.fingerprintSize = 1; // 1 byte fingerprint
-        this.buckets = Array.from({ length: capacity }, () => new Uint8Array(bucketSize));
+        this.buckets = Array.from({ length: this.capacity }, () => new Uint8Array(this.bucketSize));
     }
 
     private hash(str: string): number {
@@ -32,8 +32,17 @@ export class CuckooFilter {
     }
 
     private getHash2(i1: number, fingerprint: number): number {
-        let hf = this.hash(fingerprint.toString());
-        return (i1 ^ hf) % this.capacity;
+        const hf = this.hash(fingerprint.toString());
+        // Bitwise XOR yields signed 32-bit in JS; force unsigned before modulo.
+        const mixed = (i1 ^ hf) >>> 0;
+        return mixed % this.capacity;
+    }
+
+    private getBucket(idx: number): Uint8Array | null {
+        if (!Number.isFinite(idx)) return null;
+        const normalized = idx % this.capacity;
+        const safeIndex = normalized < 0 ? normalized + this.capacity : normalized;
+        return this.buckets[safeIndex] || null;
     }
 
     public getLoadFactor(): number {
@@ -52,7 +61,8 @@ export class CuckooFilter {
 
         let i = Math.random() < 0.5 ? i1 : i2;
         for (let n = 0; n < this.maxKicks; n++) {
-            const bucket = this.buckets[i];
+            const bucket = this.getBucket(i);
+            if (!bucket) return false;
             const entryIdx = Math.floor(Math.random() * this.bucketSize);
             const kickedF = bucket[entryIdx];
             bucket[entryIdx] = f;
@@ -68,7 +78,8 @@ export class CuckooFilter {
     }
 
     private insertIntoBucket(idx: number, f: number): boolean {
-        const bucket = this.buckets[idx];
+        const bucket = this.getBucket(idx);
+        if (!bucket) return false;
         for (let j = 0; j < this.bucketSize; j++) {
             if (bucket[j] === 0) {
                 bucket[j] = f;
@@ -86,7 +97,8 @@ export class CuckooFilter {
     }
 
     private findInBucket(idx: number, f: number): boolean {
-        const bucket = this.buckets[idx];
+        const bucket = this.getBucket(idx);
+        if (!bucket) return false;
         for (let j = 0; j < this.bucketSize; j++) {
             if (bucket[j] === f) return true;
         }
@@ -105,7 +117,8 @@ export class CuckooFilter {
     }
 
     private removeFromBucket(idx: number, f: number): boolean {
-        const bucket = this.buckets[idx];
+        const bucket = this.getBucket(idx);
+        if (!bucket) return false;
         for (let j = 0; j < this.bucketSize; j++) {
             if (bucket[j] === f) {
                 bucket[j] = 0;
