@@ -1,10 +1,10 @@
 
 import React, { useRef, useState, useEffect } from 'react';
 import { parseDictionaryFileStream, previewDictionaryFile } from '../services/fileParser';
-import { globalCuckooFilter, CuckooFilter } from '../services/cuckooFilter';
 import { Language, DictionarySource } from '../types';
 import { db } from '../services/db';
 import { downloadAndImportDictionary } from '../services/sync';
+import { DictionaryImportDeduper } from '../services/dictionaryDedup';
 
 interface SettingsModalProps {
     onClose: () => void;
@@ -87,6 +87,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
 
         try {
             const dictId = await db.createDictionary(newDictName, selectedTab, 'IMPORTED');
+            const deduper = new DictionaryImportDeduper();
+            let importedCount = 0;
+            let droppedCount = 0;
 
             const { total, bloomBuffer } = await parseDictionaryFileStream(
                 selectedFile,
@@ -95,7 +98,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                     setStatus(`Ingesting... ${count.toLocaleString()} entries`);
                 },
                 async (batch) => {
-                    await db.importBatchToDict(batch, dictId);
+                    const { entries, dropped } = deduper.dedupeBatch(batch);
+                    droppedCount += dropped;
+                    if (entries.length > 0) {
+                        importedCount += entries.length;
+                        await db.importBatchToDict(entries, dictId);
+                    }
                 }
             );
 
@@ -106,7 +114,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                 // For now, let's acknowledge the transition.
             }
 
-            setStatus(`Success! ${total.toLocaleString()} terms imported.`);
+            setStatus(
+                `Success! ${importedCount.toLocaleString()} unique terms imported, ${droppedCount.toLocaleString()} duplicates skipped (raw ${total.toLocaleString()}).`
+            );
             setTimeout(() => {
                 setImportMode(false);
                 setLoading(false);

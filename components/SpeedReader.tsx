@@ -15,6 +15,8 @@ interface SpeedReaderProps {
   onTaskComplete?: () => void;
 }
 
+const normalizeToken = (value: string): string => value.toLowerCase().replace(/[.,!?;:()"'`]/g, '').trim();
+
 const getORPIndex = (text: string, language?: Language): number => {
   const core = text.replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, "");
   const len = core.length;
@@ -178,6 +180,9 @@ const SpeedReader: React.FC<SpeedReaderProps> = ({ language, onSaveWord, knownWo
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
   }, [isPlaying, calculateDelay, onTaskComplete]);
 
+  const currentChunk = currentChunkIdx >= 0 ? chunks[currentChunkIdx] : '';
+  const isCurrentKnown = currentChunk ? knownWords.has(normalizeToken(currentChunk)) : false;
+
   return (
     <div className="space-y-6">
       {showWarmup && analysisResult && (
@@ -217,7 +222,13 @@ const SpeedReader: React.FC<SpeedReaderProps> = ({ language, onSaveWord, knownWo
             <button onClick={togglePlayback} className={`w-16 h-16 rounded-full flex items-center justify-center ${isPlaying ? 'bg-slate-100 text-slate-800 border border-slate-200' : 'bg-green-500 text-white'}`}>
               {isPlaying ? <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M6 4h4v16H6zM14 4h4v16h-4z" /></svg> : <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>}
             </button>
-            <button onClick={() => { if (currentChunkIdx >= 0) onSaveWord(chunks[currentChunkIdx], text); }} className="p-3 bg-green-50 text-green-600 rounded-full border border-green-200">收藏</button>
+            <button
+              onClick={() => { if (currentChunkIdx >= 0 && !isCurrentKnown) onSaveWord(chunks[currentChunkIdx], text); }}
+              disabled={isCurrentKnown}
+              className="p-3 bg-green-50 text-green-600 rounded-full border border-green-200 disabled:opacity-50"
+            >
+              {isCurrentKnown ? '已收藏' : '收藏'}
+            </button>
           </div>
         </div>
       </div>

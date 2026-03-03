@@ -1,4 +1,4 @@
-
+﻿
 import React, { useState, useEffect } from 'react';
 import Header from './components/Header';
 import MissionCenter from './components/MissionCenter';
@@ -12,6 +12,9 @@ import { Language, VocabularyItem, AppState, User, CEFRLevel, DailyMission } fro
 import { db } from './services/db';
 import { defineWord } from './services/gemini';
 import { calculateNextReview, getDailyReviewList } from './services/scheduler';
+import { analyzeKoreanStructure, getLemmaCandidates } from './services/linguistics';
+
+const normalizeForMatch = (value: string): string => value.toLowerCase().trim();
 
 const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<AppState['currentTab']>('MISSION');
@@ -59,7 +62,17 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!currentUser) return;
     localStorage.setItem(`vocab_${currentUser.id}`, JSON.stringify(vocabulary));
-    const userWords = new Set(vocabulary.filter(v => v.language === language).map(v => v.word.toLowerCase()));
+    const userWords = new Set<string>();
+    vocabulary
+      .filter(v => v.language === language)
+      .forEach((item) => {
+        const candidates = getLemmaCandidates(item.word, language).map(normalizeForMatch).filter(Boolean);
+        if (candidates.length === 0) {
+          userWords.add(normalizeForMatch(item.word));
+          return;
+        }
+        candidates.forEach(c => userWords.add(c));
+      });
     setKnownWords(userWords);
   }, [vocabulary, language, currentUser]);
 
@@ -89,8 +102,29 @@ const App: React.FC = () => {
 
   const handleAddWord = async (word: string, contextSentence: string) => {
     if (!currentUser) return;
-    const cleanWord = word.replace(/^[.,!?;:()"'«»\s]+|[.,!?;:()"'«»\s]+$/g, '');
-    if (!cleanWord || vocabulary.some(v => v.word.toLowerCase() === cleanWord.toLowerCase() && v.language === language)) return;
+    const cleanWord = word.replace(/^[.,!?;:()"'芦禄\s]+|[.,!?;:()"'芦禄\s]+$/g, '');
+    if (!cleanWord) return;
+
+    const incomingCandidates = getLemmaCandidates(cleanWord, language).map(normalizeForMatch).filter(Boolean);
+    if (incomingCandidates.length === 0) incomingCandidates.push(normalizeForMatch(cleanWord));
+    const incomingSet = new Set(incomingCandidates);
+
+    const duplicateExists = vocabulary.some(v => {
+      if (v.language !== language) return false;
+      const existing = getLemmaCandidates(v.word, language).map(normalizeForMatch).filter(Boolean);
+      if (existing.length === 0) existing.push(normalizeForMatch(v.word));
+      return existing.some(candidate => incomingSet.has(candidate));
+    });
+    if (duplicateExists) return;
+
+    const metadataSeed: VocabularyItem['metadata'] = {};
+    if (language === 'KR') {
+      const structure = analyzeKoreanStructure(cleanWord);
+      if (structure) {
+        metadataSeed.rootWord = structure.root;
+        metadataSeed.nuance = `${structure.particle} (${structure.function})`;
+      }
+    }
 
     const newItem: VocabularyItem = {
       id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
@@ -98,6 +132,7 @@ const App: React.FC = () => {
       word: cleanWord,
       language: language,
       contextSentence: contextSentence,
+      ...(Object.keys(metadataSeed).length > 0 ? { metadata: metadataSeed } : {}),
       timestamp: Date.now(),
       strength: 0,
       lastReview: Date.now(),
@@ -108,9 +143,12 @@ const App: React.FC = () => {
     updateMission({ wordsCount: (currentUser.missionStatus[`${new Date().toISOString().split('T')[0]}_${currentUser.id}`]?.wordsCount || 0) + 1 });
 
     try {
-        const result = await defineWord(newItem.word, newItem.contextSentence, language, currentUser.levels[language]);
-        setVocabulary(prev => prev.map(v => v.id === newItem.id ? { ...v, translation: result.translation, metadata: { ...result } } : v));
-    } catch (e) { console.error(e); }
+      const result = await defineWord(newItem.word, newItem.contextSentence, language, currentUser.levels[language]);
+      const { translation, ...aiMetadata } = result || {};
+      setVocabulary(prev => prev.map(v => v.id === newItem.id ? { ...v, translation: translation || v.translation, metadata: { ...(v.metadata || {}), ...aiMetadata } } : v));
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   return (
@@ -178,7 +216,10 @@ const App: React.FC = () => {
               <VocabularyBank 
                 items={isReviewMode ? getDailyReviewList(vocabulary.filter(v => v.language === language)) : vocabulary.filter(v => v.language === language)} 
                 onRemove={(id) => setVocabulary(v => v.filter(i => i.id !== id))} 
-                onAskAI={(item) => defineWord(item.word, item.contextSentence, language, currentUser.levels[language]).then(r => setVocabulary(v => v.map(vi => vi.id === item.id ? { ...vi, ...r } : vi)))}
+                onAskAI={(item) => defineWord(item.word, item.contextSentence, language, currentUser.levels[language]).then(r => {
+                  const { translation, ...aiMetadata } = r || {};
+                  setVocabulary(v => v.map(vi => vi.id === item.id ? { ...vi, translation: translation || vi.translation, metadata: { ...(vi.metadata || {}), ...aiMetadata } } : vi));
+                })}
                 onUpdateStrength={(id, isCorrect) => {
                   setVocabulary(prev => prev.map(v => {
                     if (v.id !== id) return v;

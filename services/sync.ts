@@ -1,8 +1,8 @@
 
 import { db } from './db';
 import { createDictionaryStreamParser } from './fileParser';
-import { globalCuckooFilter, CuckooFilter } from './cuckooFilter';
 import { Language } from '../types';
+import { DictionaryImportDeduper } from './dictionaryDedup';
 
 export const downloadAndImportDictionary = async (
     url: string,
@@ -22,16 +22,24 @@ export const downloadAndImportDictionary = async (
 
         const reader = response.body.getReader();
         let receivedLength = 0;
+        let importedCount = 0;
+        let droppedCount = 0;
 
         // 2. Initialize DB & Parser
         const dictId = await db.createDictionary(name, language, 'IMPORTED');
+        const deduper = new DictionaryImportDeduper();
         const parser = createDictionaryStreamParser(
             (count) => {
                 // This callback runs on worker progress (count only)
                 // We rely on the download loop for percentage
             },
             async (batch) => {
-                await db.importBatchToDict(batch, dictId);
+                const { entries, dropped } = deduper.dedupeBatch(batch);
+                droppedCount += dropped;
+                if (entries.length > 0) {
+                    importedCount += entries.length;
+                    await db.importBatchToDict(entries, dictId);
+                }
             }
         );
 
@@ -46,9 +54,15 @@ export const downloadAndImportDictionary = async (
 
                 if (totalLength > 0) {
                     const percent = Math.round((receivedLength / totalLength) * 100);
-                    onProgress(`Downloading & Parsing... (${(receivedLength / 1024 / 1024).toFixed(1)}MB)`, percent);
+                    onProgress(
+                        `Downloading & Parsing... (${(receivedLength / 1024 / 1024).toFixed(1)}MB, +${importedCount.toLocaleString()} unique)`,
+                        percent
+                    );
                 } else {
-                    onProgress(`Downloading & Parsing... ${(receivedLength / 1024 / 1024).toFixed(1)}MB`, 50);
+                    onProgress(
+                        `Downloading & Parsing... ${(receivedLength / 1024 / 1024).toFixed(1)}MB (+${importedCount.toLocaleString()} unique)`,
+                        50
+                    );
                 }
             }
         }
@@ -64,7 +78,10 @@ export const downloadAndImportDictionary = async (
             // for the MVP we will focus on the fact that deletion is now possible.
         }
 
-        onProgress(`Done! ${total.toLocaleString()} entries added.`, 100);
+        onProgress(
+            `Done! ${importedCount.toLocaleString()} unique entries added, ${droppedCount.toLocaleString()} duplicates skipped (raw ${total.toLocaleString()}).`,
+            100
+        );
 
     } catch (e: any) {
         throw new Error(`Sync failed: ${e.message}`);
