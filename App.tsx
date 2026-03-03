@@ -348,8 +348,20 @@ const App: React.FC = () => {
     [basePracticeQueue, reviewSeed]
   );
   const vocabViewItems = isReviewMode ? practiceQueue : mergedVocabularyForView;
-  const dueCount = needReviewCount;
   const totalDeckCount = mergedVocabularyForView.length;
+  const startReviewSession = () => {
+    if (totalDeckCount <= 0) {
+      setToastMessage('No vocabulary available. Please import words first.');
+      return;
+    }
+    if (needReviewCount <= 0) {
+      setToastMessage('No due cards today. Entering practice mode.');
+    }
+    setReviewSeed(Date.now());
+    setIsReviewMode(true);
+    setShowVocabManager(false);
+    setCurrentTab('VOCAB');
+  };
 
   const localManagerRecords = useMemo<ManagerWordRecord[]>(
     () =>
@@ -630,7 +642,17 @@ const App: React.FC = () => {
         {currentUser && (
           <>
             {currentTab === 'MISSION' && (
-              <MissionCenter user={currentUser} language={language} onStartTask={setCurrentTab} />
+              <MissionCenter
+                user={currentUser}
+                language={language}
+                onStartTask={setCurrentTab}
+                onStartReview={startReviewSession}
+                reviewStats={{
+                  needReviewCount,
+                  reviewedTodayCount,
+                  totalDeckCount,
+                }}
+              />
             )}
 
             {currentTab === 'ALPHABET' && language === 'KR' && (
@@ -684,18 +706,7 @@ const App: React.FC = () => {
 
                       <div className="flex flex-wrap gap-2 mt-5">
                         <button
-                          onClick={() => {
-                            if (totalDeckCount <= 0) {
-                              setToastMessage('当前没有可背诵单词，请先导入词表或在听力/阅读中收藏。');
-                              return;
-                            }
-                            if (dueCount <= 0) {
-                              setToastMessage('今天没有到期卡片，已进入练习模式。');
-                            }
-                            setReviewSeed(Date.now());
-                            setIsReviewMode(true);
-                            setShowVocabManager(false);
-                          }}
+                          onClick={startReviewSession}
                           className="px-5 py-2.5 rounded-xl bg-green-600 text-white text-sm font-black"
                         >
                           开始背诵
@@ -773,7 +784,7 @@ const App: React.FC = () => {
               <Dashboard
                 language={language}
                 vocabulary={vocabulary}
-                onStartReview={() => { setReviewSeed(Date.now()); setIsReviewMode(true); setShowVocabManager(false); setCurrentTab('VOCAB'); }}
+                onStartReview={startReviewSession}
                 user={currentUser}
               />
             )}

@@ -151,7 +151,7 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
     if (totalWords > 0) {
       await db.logSession({ id: Date.now().toString(), userId, type: 'DICTATION', language, score: accuracy, duration, timestamp: endTime });
       onTaskComplete?.();
-      alert(`缁冧範缁撴潫锛佹纭巼: ${accuracy}%`);
+      alert(`练习结束，正确率：${accuracy}%`);
     } else { alert("练习结束。"); }
     sessionStartTimeRef.current = Date.now();
     correctWordsCountRef.current = 0;
@@ -162,7 +162,7 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
     const video = videoRef.current;
     if (!video) return;
 
-    video.preservesPitch = true; // 纭繚鍙橀€熶笉鍙樿皟
+    video.preservesPitch = true; // 确保变速不变调
 
     const loop = () => {
       if (showWarmup) { if (!video.paused) video.pause(); return; }
@@ -315,15 +315,15 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
       <div className="bg-white p-6 rounded-xl border border-green-200 space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex bg-green-50 p-1 rounded-lg border border-green-100">
-            <button onClick={() => setInputMode('PROMPT')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${inputMode === 'PROMPT' ? 'bg-white text-green-600 border border-green-100' : 'text-slate-500 hover:text-slate-900'}`}>涓婚鐢熸垚</button>
-            <button onClick={() => setInputMode('URL')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${inputMode === 'URL' ? 'bg-white text-green-600 border border-green-100' : 'text-slate-500 hover:text-slate-900'}`}>閾炬帴瑙ｆ瀽</button>
+            <button onClick={() => setInputMode('PROMPT')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${inputMode === 'PROMPT' ? 'bg-white text-green-600 border border-green-100' : 'text-slate-500 hover:text-slate-900'}`}>主题生成</button>
+            <button onClick={() => setInputMode('URL')} className={`px-4 py-1.5 rounded-md text-xs font-bold ${inputMode === 'URL' ? 'bg-white text-green-600 border border-green-100' : 'text-slate-500 hover:text-slate-900'}`}>链接解析</button>
           </div>
           <div className="flex gap-2 flex-wrap">
             <button
               onClick={() => fileInputRef.current?.click()}
               className="px-4 py-2 rounded-lg text-xs font-bold bg-white text-green-600 border border-green-200"
             >
-              涓婁紶鏈湴濯掍綋
+              上传本地媒体
             </button>
             <button onClick={() => setFlowMode(!flowMode)} className={`px-4 py-2 rounded-lg text-xs font-bold border ${flowMode ? 'bg-green-50 text-green-600 border-green-200' : 'bg-white text-slate-500 border-green-100'}`}>
               Flow Sync {flowMode ? 'ON' : 'OFF'}
@@ -349,7 +349,7 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
           <input
             value={inputMode === 'PROMPT' ? aiPrompt : urlInput}
             onChange={(e) => inputMode === 'PROMPT' ? setAiPrompt(e.target.value) : setUrlInput(e.target.value)}
-            placeholder={inputMode === 'PROMPT' ? "杈撳叆缁冧範涓婚..." : "绮樿创濯掍綋閾炬帴..."}
+            placeholder={inputMode === 'PROMPT' ? "输入练习主题..." : "粘贴媒体链接..."}
             className="flex-1 bg-transparent border-none px-4 py-2 text-sm outline-none font-medium text-slate-900"
           />
           <button onClick={handleAISubmit} disabled={loading} className="bg-green-600 text-white px-6 py-2 rounded-lg text-xs font-bold disabled:opacity-50">
@@ -365,8 +365,8 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
               <video key={mediaUrl} ref={videoRef} src={mediaUrl} className="w-full h-full object-contain" controls={isFullPlaying || segments.length === 0} />
             ) : (
               <div className="text-center p-8">
-                <p className="text-slate-500 font-bold mb-4">鏆傛棤绱犳潗锛岃鍏堢敓鎴愭垨涓婁紶</p>
-                <button onClick={() => fileInputRef.current?.click()} className="px-6 py-2 bg-white text-green-600 rounded-lg text-xs font-bold border border-green-200">涓婁紶濯掍綋鏂囦欢</button>
+                <p className="text-slate-500 font-bold mb-4">暂无素材，请先生成或上传</p>
+                <button onClick={() => fileInputRef.current?.click()} className="px-6 py-2 bg-white text-green-600 rounded-lg text-xs font-bold border border-green-200">上传媒体文件</button>
               </div>
             )}
           </div>
@@ -374,10 +374,10 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
           {currentSegment && (
             <div className="bg-white p-6 rounded-xl border border-green-200 border-l-4 border-l-green-500">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-bold text-green-600 uppercase tracking-widest">涓枃璇戞枃</span>
-                <button onClick={() => setShowHint(!showHint)} className="text-[10px] font-bold text-slate-400 hover:text-slate-600">{showHint ? "闅愯棌鍘熸枃" : "鎻愮ず鍘熸枃"}</button>
+                <span className="text-[10px] font-bold text-green-600 uppercase tracking-widest">中文译文</span>
+                <button onClick={() => setShowHint(!showHint)} className="text-[10px] font-bold text-slate-400 hover:text-slate-600">{showHint ? "隐藏原文" : "提示原文"}</button>
               </div>
-              <p className="text-lg text-slate-800 font-bold leading-relaxed">{currentSegment.translation || '锛堟殏鏃犵炕璇戯級'}</p>
+              <p className="text-lg text-slate-800 font-bold leading-relaxed">{currentSegment.translation || '（暂无翻译）'}</p>
               {showHint && (
                 <div className="bg-green-50 p-3 rounded-lg mt-3 border border-green-100">
                   <p className="text-sm text-slate-600 italic">
@@ -409,7 +409,7 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
                     <div key={i} className={`h-1.5 rounded-full ${i <= currentIndex ? 'bg-green-500 w-4' : 'bg-green-100 w-1.5'}`} />
                   ))}
                 </div>
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">鍙?{currentIndex + 1} / {segments.length}</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">句 {currentIndex + 1} / {segments.length}</span>
               </div>
               <div className="flex-1 flex flex-wrap gap-2 justify-center py-4">
                 {segmentWords.map((word, idx) => (
@@ -426,8 +426,8 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
                 ))}
               </div>
               <div className="mt-8 grid grid-cols-2 gap-4">
-                <button onClick={playCurrentSegment} className="py-3 bg-green-600 text-white rounded-xl font-bold">閲嶅惉鍙ュ瓙</button>
-                <button onClick={() => currentIndex < segments.length - 1 && setCurrentIndex(prev => prev + 1)} className="py-3 bg-slate-100 text-slate-600 rounded-xl font-bold">璺宠繃</button>
+                <button onClick={playCurrentSegment} className="py-3 bg-green-600 text-white rounded-xl font-bold">重听句子</button>
+                <button onClick={() => currentIndex < segments.length - 1 && setCurrentIndex(prev => prev + 1)} className="py-3 bg-slate-100 text-slate-600 rounded-xl font-bold">跳过</button>
               </div>
             </div>
           ) : mediaUrl ? (
