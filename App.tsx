@@ -11,7 +11,7 @@ import KoreanAlphabetCoach from './components/KoreanAlphabetCoach';
 import { Language, VocabularyItem, AppState, User, CEFRLevel, DailyMission } from './types';
 import { db } from './services/db';
 import { defineWord } from './services/gemini';
-import { getDailyReviewList } from './services/scheduler';
+import { calculateNextReview, getDailyReviewList } from './services/scheduler';
 
 const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<AppState['currentTab']>('MISSION');
@@ -179,8 +179,19 @@ const App: React.FC = () => {
                 items={isReviewMode ? getDailyReviewList(vocabulary.filter(v => v.language === language)) : vocabulary.filter(v => v.language === language)} 
                 onRemove={(id) => setVocabulary(v => v.filter(i => i.id !== id))} 
                 onAskAI={(item) => defineWord(item.word, item.contextSentence, language, currentUser.levels[language]).then(r => setVocabulary(v => v.map(vi => vi.id === item.id ? { ...vi, ...r } : vi)))}
-                onUpdateStrength={(id, s) => {
-                  setVocabulary(prev => prev.map(v => v.id === id ? { ...v, strength: s, lastReview: Date.now() } : v));
+                onUpdateStrength={(id, isCorrect) => {
+                  setVocabulary(prev => prev.map(v => {
+                    if (v.id !== id) return v;
+                    const now = Date.now();
+                    const { strength, nextReview } = calculateNextReview(v.strength, v.lastReview, isCorrect);
+                    return {
+                      ...v,
+                      strength,
+                      lastReview: now,
+                      nextReview,
+                      reviewHistory: [...(v.reviewHistory || []), now]
+                    };
+                  }));
                 }}
                 level={currentUser.levels[language]}
               />

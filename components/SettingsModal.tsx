@@ -245,6 +245,21 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                         />
                                         <p className="text-[10px] text-slate-400">If set, requests will be routed through your backend to hide the API Key.</p>
                                     </div>
+
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Proxy Access Token</label>
+                                        <input
+                                            type="password"
+                                            value={localStorage.getItem('GEMINI_PROXY_TOKEN') || ''}
+                                            onChange={(e) => {
+                                                localStorage.setItem('GEMINI_PROXY_TOKEN', e.target.value);
+                                                setNewDictName(n => n);
+                                            }}
+                                            placeholder="Bearer token for /api/proxy"
+                                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono outline-none focus:border-indigo-500"
+                                        />
+                                        <p className="text-[10px] text-slate-400">Sent as Authorization Bearer token when GEMINI_PROXY_URL is enabled.</p>
+                                    </div>
                                 </div>
 
                                 <div className="bg-indigo-50 p-6 rounded-[24px] border border-indigo-100 flex gap-4">

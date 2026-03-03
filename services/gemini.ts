@@ -3,6 +3,7 @@ import { TranscriptionSegment, Language, DifficultyAnalysis, CEFRLevel } from ".
 
 export const getAIKey = () => localStorage.getItem('GEMINI_API_KEY') || (import.meta as any).env?.VITE_GEMINI_KEY || '';
 export const getProxyUrl = () => localStorage.getItem('GEMINI_PROXY_URL') || '';
+export const getProxyToken = () => localStorage.getItem('GEMINI_PROXY_TOKEN') || '';
 
 const getAI = () => {
   const key = getAIKey();
@@ -25,12 +26,28 @@ const getResponseText = (response: any): string => {
 const safeGenerateContent = async (args: { model: string, contents: any, config?: any }) => {
   const proxyUrl = getProxyUrl();
   if (proxyUrl) {
+    const proxyToken = getProxyToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (proxyToken) {
+      headers.Authorization = `Bearer ${proxyToken}`;
+    }
+
     const response = await fetch(proxyUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(args)
     });
-    const data = await response.json();
+    let data: any = {};
+    try {
+      data = await response.json();
+    } catch {
+      data = {};
+    }
+
+    if (!response.ok) {
+      throw new Error(data.error || `Proxy request failed (${response.status})`);
+    }
+
     if (data.error) throw new Error(data.error);
     return { text: data.text, candidates: data.candidates };
   }

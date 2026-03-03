@@ -2,48 +2,42 @@
 setlocal
 chcp 65001 > nul
 
-:: ========================================================
-::   LinguistFlow AI 一键启动助手 (One-Click Starter)
-:: ========================================================
+REM ========================================================
+REM   LinguistFlow AI One-Click Starter (Windows)
+REM ========================================================
 
 echo.
-echo  [1/3] 检查运行环境...
+echo [1/3] Checking environment...
 echo.
 
-:: 检查 .env
 if not exist .env (
-    echo [!] 未检测到 .env 配置文件，正在为你创建模板...
+    echo [!] .env not found, creating a template...
     echo GEMINI_API_KEY=your_key_here > .env
+    echo PROXY_AUTH_TOKEN=change_me >> .env
+    echo RATE_LIMIT_WINDOW_MS=60000 >> .env
+    echo RATE_LIMIT_MAX_REQUESTS=60 >> .env
     echo PORT=3001 >> .env
-    echo [OK] 已生成 .env 文件，请务必在其中填入你的 API Key。
+    echo [OK] .env created. Please update GEMINI_API_KEY and PROXY_AUTH_TOKEN.
 ) else (
-    echo [OK] .env 配置文件已就绪。
+    echo [OK] .env already exists.
 )
 
-:: 检查 node_modules
 if not exist node_modules\ (
-    echo [!] 正在安装必要的组件，这可能需要一两分钟...
+    echo [!] Installing dependencies...
     call npm install
-    echo [OK] 组件安装完成。
+    echo [OK] Dependencies installed.
 ) else (
-    echo [OK] 组件依赖已就绪。
+    echo [OK] Dependencies ready.
 )
 
 echo.
-echo  [2/3] 正在启动全量服务 (Proxy + Vite)...
+echo [2/3] Starting services (Proxy + Vite)...
 echo.
-
-:: 启动主程序
-:: 使用 npm start (调用 concurrently 同时启动后端代理和前端)
 call npm start
 
 echo.
-echo  [3/3] 服务运行中...
+echo [3/3] Running...
+echo [INFO] Frontend: http://localhost:3000
+echo [INFO] Proxy: http://localhost:3001
 echo.
-echo [提示] 
-echo - 若浏览器未自动打开，请手动访问: http://localhost:3000
-echo - 后端代理端口已设为 3001
-echo - 退出请直接关闭此窗口。
-echo.
-
 pause

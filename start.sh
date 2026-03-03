@@ -10,6 +10,9 @@ echo "--- [1/3] Checking environment ---"
 if [ ! -f .env ]; then
     echo "[!] .env not found, creating a default template..."
     echo "GEMINI_API_KEY=your_key_here" > .env
+    echo "PROXY_AUTH_TOKEN=change_me" >> .env
+    echo "RATE_LIMIT_WINDOW_MS=60000" >> .env
+    echo "RATE_LIMIT_MAX_REQUESTS=60" >> .env
     echo "PORT=3001" >> .env
     echo "[OK] .env file created. Please fill in your API Key."
 else
