@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { DifficultyAnalysis } from '../types';
 
 interface DifficultyWarmupProps {
@@ -22,15 +22,15 @@ const DifficultyWarmup: React.FC<DifficultyWarmupProps> = ({ analysis, onProceed
               <span className={`px-3 py-1 rounded-full text-xs font-black bg-${colorClass}-500 text-white uppercase tracking-widest`}>
                 {isHard ? '高难度预警' : 'i + 1 最佳匹配'}
               </span>
-              <span className="text-slate-500 font-mono text-sm font-bold">Level {level}</span>
+              <span className="text-slate-500 font-mono text-sm font-bold">等级 {level}</span>
             </div>
             <h3 className={`text-2xl font-black text-${colorClass}-600`}>
-              {isHard ? '生词密度过高' : '准备好进入心流了吗？'}
+              {isHard ? '生词密度过高' : '准备进入心流状态了吗？'}
             </h3>
             <p className={`text-${colorClass}-600 mt-1 font-medium`}>
               {isHard
-                ? `当前文本包含 ${percentage}% 的生词，超过了 15% 的最佳学习区。`
-                : `生词密度为 ${percentage}%，非常适合目前的你。`}
+                ? `当前文本包含 ${percentage}% 的生词，超过 15% 的最佳学习区间。`
+                : `当前生词密度为 ${percentage}%，非常适合你现在的学习节奏。`}
             </p>
           </div>
           <div className="relative w-20 h-20 flex items-center justify-center">
@@ -86,7 +86,7 @@ const DifficultyWarmup: React.FC<DifficultyWarmupProps> = ({ analysis, onProceed
             onClick={onProceed}
             className={`px-8 py-3 rounded-xl font-bold text-white shadow-lg transform hover:scale-105 transition-all ${isHard ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'}`}
           >
-            {isHard ? '接受挑战（预习完毕）' : '开始学习'}
+            {isHard ? '接受挑战（已预习）' : '开始学习'}
           </button>
         </div>
       </div>

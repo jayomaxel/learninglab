@@ -261,7 +261,7 @@ const SpeedReader: React.FC<SpeedReaderProps> = ({ language, onSaveWord, knownWo
         <div className="lg:col-span-2 space-y-4">
           <div className="bg-white p-6 rounded-2xl border border-green-200 grid grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase">阅读速度 (WPM): {wpm}</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase">阅读速度（每分钟词数）: {wpm}</label>
               <input type="range" min="50" max="800" step="25" value={wpm} onChange={(e) => setWpm(parseInt(e.target.value))} className="w-full accent-green-600" />
             </div>
             <div className="space-y-2">

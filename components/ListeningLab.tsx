@@ -291,7 +291,7 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
       }
     } catch (err) {
       if (!isRateLimitError(err)) {
-        alert("AI 生成失败，请稍后重试。");
+        alert("智能生成失败，请稍后重试。");
       }
     } finally { setLoading(false); }
   };
@@ -326,7 +326,7 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
               上传本地媒体
             </button>
             <button onClick={() => setFlowMode(!flowMode)} className={`px-4 py-2 rounded-lg text-xs font-bold border ${flowMode ? 'bg-green-50 text-green-600 border-green-200' : 'bg-white text-slate-500 border-green-100'}`}>
-              Flow Sync {flowMode ? 'ON' : 'OFF'}
+              流式同步 {flowMode ? '开' : '关'}
             </button>
             <button onClick={playFullAudio} disabled={!mediaUrl || showWarmup} className="px-4 py-2 rounded-lg text-xs font-bold bg-green-500 text-white disabled:opacity-50">
               {isFullPlaying ? '正在听写' : '开始听写'}
@@ -433,7 +433,7 @@ const ListeningLab: React.FC<ListeningLabProps> = ({ language, onSaveWord, level
           ) : mediaUrl ? (
             <div className="flex-1 bg-white rounded-2xl border border-green-200 flex flex-col items-center justify-center p-12 text-center h-full">
               <p className="text-slate-600 font-bold mb-2">媒体已上传</p>
-              <p className="text-slate-400 text-sm">当前没有可听写分段。你可以直接播放媒体，或者在上方用 AI 生成听写内容。</p>
+              <p className="text-slate-400 text-sm">当前没有可听写分段。你可以直接播放媒体，或者在上方用智能生成听写内容。</p>
             </div>
           ) : (
             <div className="flex-1 bg-white rounded-2xl border-2 border-dashed border-green-100 flex flex-col items-center justify-center p-12 text-center h-full">

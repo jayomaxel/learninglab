@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { AppState, Language, User } from '../types';
 
 interface MissionCenterProps {
@@ -30,6 +30,7 @@ const MissionCenter: React.FC<MissionCenterProps> = ({
 
   const isBeginner = level.startsWith('A');
   const isKorean = language === 'KR';
+  const languageName = language === 'EN' ? '英语' : language === 'FR' ? '法语' : '韩语';
 
   const getTaskOneConfig = () => {
     if (isKorean && isBeginner) {
@@ -43,7 +44,7 @@ const MissionCenter: React.FC<MissionCenterProps> = ({
 
     const langName = language === 'FR' ? '法语' : language === 'EN' ? '英语' : '韩语';
     return {
-      title: `${langName}背诵复习`,
+      title: `${langName}背词复习`,
       desc: '进入单词卡片，按遗忘曲线进行复习。',
       target: 'VOCAB' as const,
       icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2',
@@ -69,7 +70,7 @@ const MissionCenter: React.FC<MissionCenterProps> = ({
         </div>
         <h1 className="text-2xl font-bold text-slate-800 mb-2">今日任务，{user.name}</h1>
         <p className="text-slate-500 text-xs leading-relaxed max-w-xl">
-          已进入 {language} 学习流。完成下方推荐训练可以保持节奏并提升复习命中率。
+          你正在进行 {languageName} 学习流。完成下方推荐训练可以保持节奏并提升复习命中率。
         </p>
       </div>
 
@@ -117,7 +118,7 @@ const MissionCenter: React.FC<MissionCenterProps> = ({
           <h3 className="text-md font-bold text-slate-800 mb-1">听力实验</h3>
           <p className="text-slate-400 text-[10px] mb-4">精听速记训练。</p>
           <span className={`text-[10px] font-bold px-2 py-0.5 rounded border uppercase ${mission.listeningDone ? 'bg-green-100 text-green-700 border-green-200' : 'bg-slate-50 text-slate-400 border-slate-100'}`}>
-            {mission.listeningDone ? '已达成' : '待开始'}
+            {mission.listeningDone ? '已完成' : '待开始'}
           </span>
         </div>
 
@@ -128,9 +129,9 @@ const MissionCenter: React.FC<MissionCenterProps> = ({
             </svg>
           </div>
           <h3 className="text-md font-bold text-slate-800 mb-1">极速阅读</h3>
-          <p className="text-slate-400 text-[10px] mb-4">RSVP 训练模式。</p>
+          <p className="text-slate-400 text-[10px] mb-4">极速闪读训练模式。</p>
           <span className={`text-[10px] font-bold px-2 py-0.5 rounded border uppercase ${mission.readingDone ? 'bg-green-100 text-green-700 border-green-200' : 'bg-slate-50 text-slate-400 border-slate-100'}`}>
-            {mission.readingDone ? '已达成' : '待开始'}
+            {mission.readingDone ? '已完成' : '待开始'}
           </span>
         </div>
       </div>

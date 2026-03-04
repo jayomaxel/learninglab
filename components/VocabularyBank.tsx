@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { CEFRLevel, VocabularyItem } from '../types';
 
 const GenderBadge: React.FC<{ gender: 'M' | 'F' }> = ({ gender }) => (

@@ -80,7 +80,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
             const preview = await previewDictionaryFile(file);
             setPreviewData(preview);
         } catch (err) {
-            setStatus("Error reading file preview.");
+            setStatus('读取文件预览失败。');
         }
     };
 
@@ -88,7 +88,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
         if (selectedTab === 'API')
             return;
         setLoading(true);
-        setStatus("Initializing Stream...");
+        setStatus('正在初始化流式导入...');
         setProgress(0);
         try {
             await downloadAndImportDictionary(url, name, selectedTab, (msg, pct) => {
@@ -99,7 +99,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
             loadDictionaries();
             setTimeout(() => setLoading(false), 1500);
         } catch (e: any) {
-            setStatus("Download Failed: " + e.message);
+            setStatus('下载失败：' + e.message);
             setTimeout(() => setLoading(false), 3000);
         }
     };
@@ -110,7 +110,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
 
         setLoading(true);
         setProgress(0);
-        setStatus('Initializing VFS Store...');
+        setStatus('正在初始化本地词库存储...');
         setPreviewData(null); // Clear preview to show progress
 
         try {
@@ -123,7 +123,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                 selectedFile,
                 (percent, count) => {
                     setProgress(percent);
-                    setStatus(`Ingesting... ${count.toLocaleString()} entries`);
+                    setStatus(`正在导入... ${count.toLocaleString()} 条词条`);
                 },
                 async (batch) => {
                     const { entries, dropped } = deduper.dedupeBatch(batch);
@@ -144,7 +144,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
             }
 
             setStatus(
-                `Success! ${importedCount.toLocaleString()} unique terms imported, ${droppedCount.toLocaleString()} duplicates skipped (raw ${total.toLocaleString()}).`
+                `导入完成：新增 ${importedCount.toLocaleString()} 条唯一词条，跳过 ${droppedCount.toLocaleString()} 条重复项（原始总数 ${total.toLocaleString()}）。`
             );
             onCacheRefreshNeeded();
             setTimeout(() => {
@@ -156,7 +156,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
             }, 1000);
 
         } catch (err: any) {
-            setStatus('Error: ' + err.message);
+            setStatus('导入失败：' + err.message);
             console.error(err);
             setLoading(false);
         } finally {
@@ -184,33 +184,33 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                 setProxyCheckMessage(`连接失败：${reason}`);
             }
         } catch (err: any) {
-            setProxyCheckMessage(`连接失败：${err?.message || 'Unknown error'}`);
+            setProxyCheckMessage(`连接失败：${err?.message || '未知错误'}`);
         } finally {
             setProxyCheckLoading(false);
         }
     };
 
     const deleteDictionary = async (dict: DictionarySource) => {
-        if (!confirm(`Warning: This action is irreversible.\n\nPermanently delete "${dict.name}" and all its ${dict.count.toLocaleString()} entries?`)) return;
+        if (!confirm(`警告：该操作不可撤销。\n\n是否永久删除“${dict.name}”及其全部 ${dict.count.toLocaleString()} 条词条？`)) return;
         try {
             await db.deleteDictionary(dict.id);
             onCacheRefreshNeeded();
             await loadDictionaries();
-            setStatus(`Deleted "${dict.name}".`);
+            setStatus(`已删除“${dict.name}”。`);
         } catch (err: any) {
-            setStatus(`Delete failed: ${err?.message || 'Unknown error'}`);
+            setStatus(`删除失败：${err?.message || '未知错误'}`);
         }
     };
 
     const clearDictionary = async (dict: DictionarySource) => {
-        if (!confirm(`Clear all ${dict.count.toLocaleString()} entries from "${dict.name}"? Metadata (name/priority) will remain.`)) return;
+        if (!confirm(`确认清空“${dict.name}”中的 ${dict.count.toLocaleString()} 条词条吗？将保留词典名称和优先级等元数据。`)) return;
         try {
             await db.clearDictionaryEntries(dict.id);
             onCacheRefreshNeeded();
             await loadDictionaries();
-            setStatus(`Cleared entries in "${dict.name}".`);
+            setStatus(`已清空“${dict.name}”的词条。`);
         } catch (err: any) {
-            setStatus(`Clear failed: ${err?.message || 'Unknown error'}`);
+            setStatus(`清空失败：${err?.message || '未知错误'}`);
         }
     };
 
@@ -246,11 +246,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                 <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-white z-10">
                     <div>
                         <h3 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-                            <span className="bg-slate-900 text-white px-2 py-0.5 rounded text-sm tracking-widest">VFS</span> Dictionary Hub
+                            <span className="bg-slate-900 text-white px-2 py-0.5 rounded text-sm tracking-widest">VFS</span> 词典中心
                         </h3>
-                        <p className="text-slate-500 text-sm mt-1 font-medium">Manage local dictionaries, search priority, and imports.</p>
+                        <p className="text-slate-500 text-sm mt-1 font-medium">管理本地词典、检索优先级与导入任务。</p>
                     </div>
-                    <button onClick={onClose} className="p-2 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-900 transition-all" title="Close settings" aria-label="Close settings dialog">
+                    <button onClick={onClose} className="p-2 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-900 transition-all" title="关闭设置" aria-label="关闭设置对话框">
                         <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>
                 </div>
@@ -283,14 +283,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                 <div>
                                     <h4 className="text-xl font-black text-slate-800 flex items-center gap-2">
                                         <span className="bg-orange-100 text-orange-600 p-1.5 rounded-lg"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg></span>
-                                        Security & API Config
+                                        安全与接口配置
                                     </h4>
-                                    <p className="text-slate-500 text-sm mt-2">To prevent "Fatal Security Redline" (Key Leaking), we recommend using a Proxy or local BYOK.</p>
+                                    <p className="text-slate-500 text-sm mt-2">为避免接口密钥泄漏，建议优先使用代理转发或本地自带密钥方案。</p>
                                 </div>
 
                                 <div className="bg-white p-6 rounded-[24px] border border-slate-200 shadow-sm space-y-6">
                                     <div className="space-y-2">
-                                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Gemini API Key</label>
+                                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Gemini 接口密钥</label>
                                         <input
                                             type="password"
                                             value={localStorage.getItem('GEMINI_API_KEY') || ''}
@@ -298,28 +298,28 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                                 localStorage.setItem('GEMINI_API_KEY', e.target.value);
                                                 setNewDictName(n => n); // Dummy set to force re-render
                                             }}
-                                            placeholder="AI_..."
+                                            placeholder="请输入接口密钥"
                                             className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono outline-none focus:border-indigo-500"
                                         />
-                                        <p className="text-[10px] text-slate-400">Stored locally in your browser. Never hardcode this in source.</p>
+                                        <p className="text-[10px] text-slate-400">仅保存在当前浏览器本地，请勿将密钥硬编码到源码中。</p>
                                     </div>
 
                                     <div className="space-y-2">
-                                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Backend Proxy URL (Optional)</label>
+                                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest">后端代理地址（可选）</label>
                                         <input
                                             value={localStorage.getItem('GEMINI_PROXY_URL') || ''}
                                             onChange={(e) => {
                                                 localStorage.setItem('GEMINI_PROXY_URL', e.target.value);
                                                 setNewDictName(n => n);
                                             }}
-                                            placeholder="http://localhost:3001/api/proxy"
+                                            placeholder="例如：http://localhost:3001/api/proxy"
                                             className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono outline-none focus:border-indigo-500"
                                         />
-                                        <p className="text-[10px] text-slate-400">If set, requests will be routed through your backend to hide the API Key.</p>
+                                        <p className="text-[10px] text-slate-400">设置后，请求将通过你的后端转发，从而隐藏接口密钥。</p>
                                     </div>
 
                                     <div className="space-y-2">
-                                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Proxy Access Token</label>
+                                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest">代理访问令牌</label>
                                         <input
                                             type="password"
                                             value={localStorage.getItem('GEMINI_PROXY_TOKEN') || ''}
@@ -327,10 +327,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                                 localStorage.setItem('GEMINI_PROXY_TOKEN', e.target.value);
                                                 setNewDictName(n => n);
                                             }}
-                                            placeholder="Bearer token for /api/proxy"
+                                            placeholder="用于 /api/proxy 的访问令牌"
                                             className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono outline-none focus:border-indigo-500"
                                         />
-                                        <p className="text-[10px] text-slate-400">Sent as Authorization Bearer token when GEMINI_PROXY_URL is enabled.</p>
+                                        <p className="text-[10px] text-slate-400">启用代理地址后，该令牌会作为授权请求头发送。</p>
                                     </div>
 
                                     <div className="pt-2">
@@ -339,7 +339,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                             disabled={proxyCheckLoading}
                                             className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 disabled:opacity-50"
                                         >
-                                            {proxyCheckLoading ? 'Testing...' : 'Test Proxy Connection'}
+                                            {proxyCheckLoading ? '检测中...' : '检测代理连接'}
                                         </button>
                                         {proxyCheckMessage && (
                                             <p className="mt-2 text-xs text-slate-500">{proxyCheckMessage}</p>
@@ -352,10 +352,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                         <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                                     </div>
                                     <div>
-                                        <h5 className="font-bold text-indigo-900 text-sm">Deployment Tip</h5>
+                                        <h5 className="font-bold text-indigo-900 text-sm">部署提示</h5>
                                         <p className="text-indigo-700/70 text-xs mt-1 leading-relaxed">
-                                            When deploying to a public server, **empty the API Key field** in settings and use a Proxy URL.
-                                            The Proxy server should hold the `API_KEY` in its environment variables.
+                                            部署到公网环境时，建议在设置里留空接口密钥，并改用代理地址。
+                                            代理服务端应通过环境变量保存 `API_KEY`。
                                         </p>
                                     </div>
                                 </div>
@@ -365,18 +365,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                 <div className="p-6 pb-0">
                                     <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-center mb-4">
                                         <div className="flex items-center gap-2">
-                                            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Active Hub:</span>
+                                            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">当前分区：</span>
                                             <span className="font-black text-slate-800 text-lg">{selectedTab}</span>
                                         </div>
                                         <div className="flex gap-2">
-                                            <button onClick={disableAll} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-all" title="Disable all dictionaries" aria-label="Batch disable all dictionaries">Batch Disable</button>
+                                            <button onClick={disableAll} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-all" title="禁用全部词典" aria-label="批量禁用全部词典">批量禁用</button>
                                             <button
                                                 onClick={() => { setImportMode(!importMode); setPreviewData(null); setSelectedFile(null); }}
                                                 className={`px-5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${importMode ? 'bg-slate-200 text-slate-600' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200'}`}
-                                                title={importMode ? "Cancel import" : "Import dictionary"}
-                                                aria-label={importMode ? "Cancel import dictionary" : "Import new dictionary"}
+                                                title={importMode ? "取消导入" : "导入词典"}
+                                                aria-label={importMode ? "取消导入词典" : "导入新词典"}
                                             >
-                                                {importMode ? 'Cancel Import' : 'Import New Dictionary'}
+                                                {importMode ? '取消导入' : '导入新词典'}
                                             </button>
                                         </div>
                                     </div>
@@ -385,7 +385,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                     {!importMode && RECOMMENDED_DICTS[selectedTab].length > 0 && (
                                         <div className="mb-4">
                                             <div className="flex items-center gap-2 mb-2 px-1">
-                                                <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Recommended Dictionaries</span>
+                                                <span className="text-xs font-black text-slate-400 uppercase tracking-widest">推荐词典</span>
                                                 <div className="h-px bg-slate-200 flex-1"></div>
                                             </div>
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -395,14 +395,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                                         <div key={i} className="bg-white p-3 rounded-xl border border-indigo-100 shadow-sm flex items-center justify-between">
                                                             <div>
                                                                 <div className="font-bold text-slate-800 text-sm">{rec.name}</div>
-                                                                <div className="text-[10px] text-slate-400">{rec.size} • Cloud Sync</div>
+                                                                <div className="text-[10px] text-slate-400">{rec.size} • 云端同步</div>
                                                             </div>
                                                             <button
                                                                 onClick={() => handleDownloadDict(rec.url, rec.name)}
                                                                 disabled={isInstalled || loading}
                                                                 className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${isInstalled ? 'bg-green-100 text-green-600' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`}
                                                             >
-                                                                {isInstalled ? 'Installed' : 'Download'}
+                                                                {isInstalled ? '已安装' : '下载'}
                                                             </button>
                                                         </div>
                                                     );
@@ -427,25 +427,25 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                     {importMode && (
                                         <div className="bg-white p-6 rounded-3xl border border-indigo-100 shadow-xl relative overflow-hidden mb-6 animate-in slide-in-from-top-2">
                                             <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-500" />
-                                            <h4 className="text-lg font-bold text-slate-800 mb-4">Ingest Dictionary Data</h4>
+                                            <h4 className="text-lg font-bold text-slate-800 mb-4">导入词典数据</h4>
 
                                             {/* Import Inputs */}
                                             <div className="flex gap-4 items-end mb-4">
                                                 <div className="flex-1 space-y-2">
-                                                    <label className="text-xs font-bold text-slate-500">Name (Optional)</label>
+                                                    <label className="text-xs font-bold text-slate-500">名称（可选）</label>
                                                     <input
                                                         value={newDictName}
                                                         onChange={e => setNewDictName(e.target.value)}
-                                                        placeholder="e.g. Oxford Advanced..."
+                                                        placeholder="例如：牛津高阶..."
                                                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-indigo-500"
                                                     />
                                                 </div>
                                                 <div className="flex-1 space-y-2">
-                                                    <label className="text-xs font-bold text-slate-500">Source (CSV/TXT)</label>
+                                                    <label className="text-xs font-bold text-slate-500">来源文件（CSV/TXT）</label>
                                                     <div className="relative">
                                                         <input type="file" accept=".csv,.txt" ref={fileInputRef} onChange={handleFileSelect} className="hidden" id="dict-upload" />
                                                         <label htmlFor="dict-upload" className={`block w-full text-center px-4 py-3 rounded-xl border-2 border-dashed cursor-pointer text-sm font-bold transition-all ${loading ? 'bg-slate-100 border-slate-300 text-slate-400' : 'bg-indigo-50 border-indigo-200 text-indigo-600 hover:bg-indigo-100'}`}>
-                                                            {loading ? 'Processing...' : (selectedFile ? selectedFile.name : 'Select File')}
+                                                            {loading ? '处理中...' : (selectedFile ? selectedFile.name : '选择文件')}
                                                         </label>
                                                     </div>
                                                 </div>
@@ -454,13 +454,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                             {/* Preview Section */}
                                             {previewData && !loading && (
                                                 <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 mb-4">
-                                                    <h5 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">Preview (First 5 Rows)</h5>
+                                                    <h5 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">预览（前 5 行）</h5>
                                                     <div className="overflow-x-auto">
                                                         <table className="w-full text-left border-collapse">
                                                             <thead>
                                                                 <tr className="text-xs text-slate-400 border-b border-slate-200">
-                                                                    <th className="py-1 px-2">Word</th>
-                                                                    <th className="py-1 px-2">Parsed Translation</th>
+                                                                    <th className="py-1 px-2">单词</th>
+                                                                    <th className="py-1 px-2">解析后释义</th>
                                                                 </tr>
                                                             </thead>
                                                             <tbody>
@@ -474,8 +474,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                                         </table>
                                                     </div>
                                                     <div className="mt-4 flex justify-end">
-                                                        <button onClick={confirmImport} className="px-6 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-xs font-bold shadow-md transition-all" title="Confirm and import the dictionary" aria-label="Confirm import dictionary">
-                                                            Looks Good, Import
+                                                        <button onClick={confirmImport} className="px-6 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-xs font-bold shadow-md transition-all" title="确认并导入词典" aria-label="确认导入词典">
+                                                            预览无误，开始导入
                                                         </button>
                                                     </div>
                                                 </div>
@@ -487,16 +487,16 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                 <div className="p-6 pt-0 flex-1 overflow-y-auto custom-scrollbar space-y-3">
                                     {dictionaries.length === 0 ? (
                                         <div className="text-center py-20 opacity-50">
-                                            <p className="text-xl font-bold text-slate-400">No dictionaries found.</p>
+                                            <p className="text-xl font-bold text-slate-400">暂无词典。</p>
                                         </div>
                                     ) : (
                                         dictionaries.map((dict, idx) => (
                                             <div key={dict.id} className={`bg-white p-4 rounded-2xl border transition-all flex items-center justify-between group ${dict.enabled ? 'border-slate-200 shadow-sm' : 'border-slate-100 opacity-60 bg-slate-50'}`}>
                                                 <div className="flex items-center gap-4">
                                                     <div className="flex flex-col items-center gap-1 text-slate-300 w-6">
-                                                        <button onClick={() => movePriority(idx, 'up')} disabled={idx === 0} className="hover:text-indigo-600 disabled:opacity-30" title="Move up" aria-label={`Move ${dict.name} up`}><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 15l7-7 7 7" /></svg></button>
+                                                        <button onClick={() => movePriority(idx, 'up')} disabled={idx === 0} className="hover:text-indigo-600 disabled:opacity-30" title="上移" aria-label={`上移 ${dict.name}`}><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 15l7-7 7 7" /></svg></button>
                                                         <span className="text-[10px] font-black">{idx + 1}</span>
-                                                        <button onClick={() => movePriority(idx, 'down')} disabled={idx === dictionaries.length - 1} className="hover:text-indigo-600 disabled:opacity-30" title="Move down" aria-label={`Move ${dict.name} down`}><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M19 9l-7 7-7-7" /></svg></button>
+                                                        <button onClick={() => movePriority(idx, 'down')} disabled={idx === dictionaries.length - 1} className="hover:text-indigo-600 disabled:opacity-30" title="下移" aria-label={`下移 ${dict.name}`}><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M19 9l-7 7-7-7" /></svg></button>
                                                     </div>
                                                     <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-black text-lg shadow-sm ${dict.type === 'USER' ? 'bg-green-100 text-green-600' : 'bg-slate-100 text-slate-500'}`}>
                                                         {dict.name.substring(0, 1).toUpperCase()}
@@ -504,9 +504,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                                     <div>
                                                         <h4 className="font-bold text-slate-800">{dict.name}</h4>
                                                         <div className="flex items-center gap-3 text-xs font-medium text-slate-400">
-                                                            <span className="bg-slate-100 px-1.5 rounded text-slate-600 font-bold border border-slate-200">{dict.count.toLocaleString()} entries</span>
+                                                            <span className="bg-slate-100 px-1.5 rounded text-slate-600 font-bold border border-slate-200">{dict.count.toLocaleString()} 条词条</span>
                                                             <span>{new Date(dict.importedAt).toLocaleDateString()}</span>
-                                                            {dict.type === 'USER' && <span className="text-green-600 font-bold">Writable</span>}
+                                                            {dict.type === 'USER' && <span className="text-green-600 font-bold">可写入</span>}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -518,10 +518,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, currentAppLangua
                                                     </label>
 
                                                     <div className="flex items-center gap-1">
-                                                        <button onClick={() => clearDictionary(dict)} className="p-2 text-slate-300 hover:text-orange-500 transition-colors" title="Clear Entries">
+                                                        <button onClick={() => clearDictionary(dict)} className="p-2 text-slate-300 hover:text-orange-500 transition-colors" title="清空词条">
                                                             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                                                         </button>
-                                                        <button onClick={() => deleteDictionary(dict)} className="p-2 text-slate-300 hover:text-red-600 transition-colors" title="Delete Dictionary">
+                                                        <button onClick={() => deleteDictionary(dict)} className="p-2 text-slate-300 hover:text-red-600 transition-colors" title="删除词典">
                                                             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                                                         </button>
                                                     </div>

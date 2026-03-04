@@ -15,7 +15,7 @@ import { analyzeKoreanStructure, getLemmaCandidates } from './services/linguisti
 
 const normalizeForMatch = (value: string): string => value.toLowerCase().trim();
 const MEANING_SPLITTER = /[;；|、/，,]+/;
-const GENERIC_IMPORTED_CONTEXT = 'Imported from vocabulary file';
+const GENERIC_IMPORTED_CONTEXT = '来自词库导入';
 const DAILY_REVIEW_LIMIT = 120;
 const MANAGER_SOURCE_ALL = '__ALL__';
 const MANAGER_SOURCE_LOCAL = '__LOCAL__';
@@ -176,7 +176,7 @@ const App: React.FC = () => {
           userId: currentUser?.id || 'dictionary',
           word: entry.word,
           language,
-          contextSentence: entry.translation || `Imported from ${entry.dictName || 'dictionary'}`,
+          contextSentence: entry.translation || `来自 ${entry.dictName || '词典'} 导入`,
           translation: entry.translation,
           metadata: {
             ...(entry.metadata || {}),
@@ -351,11 +351,11 @@ const App: React.FC = () => {
   const totalDeckCount = mergedVocabularyForView.length;
   const startReviewSession = () => {
     if (totalDeckCount <= 0) {
-      setToastMessage('No vocabulary available. Please import words first.');
+      setToastMessage('暂无可复习词条，请先导入或添加单词。');
       return;
     }
     if (needReviewCount <= 0) {
-      setToastMessage('No due cards today. Entering practice mode.');
+      setToastMessage('今日没有到期卡片，已进入练习模式。');
     }
     setReviewSeed(Date.now());
     setIsReviewMode(true);
@@ -580,7 +580,7 @@ const App: React.FC = () => {
         safeNextReview = now + 86400000;
       }
       if (!isCorrect && safeNextReview <= now) {
-        // Anki-like relearning step: failed cards return after a short delay instead of immediately.
+        // 类似 Anki 的再学习步骤：答错卡片会短暂延迟后再出现，而不是立刻重复。
         safeNextReview = now + (10 * 60 * 1000);
       }
       const updated: VocabularyItem = {
@@ -685,7 +685,7 @@ const App: React.FC = () => {
                 {!isReviewMode ? (
                   <>
                     <div className="bg-white border border-green-200 rounded-2xl p-6">
-                      <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Deck</p>
+                      <p className="text-xs font-black text-slate-400 uppercase tracking-widest">词库卡组</p>
                       <h2 className="text-2xl font-black text-slate-900 mt-1">背诵模式</h2>
                       <p className="text-sm text-slate-500 mt-1">词库默认隐藏。点击“开始背诵”进入单词卡；点击“管理词库”再查看和维护词条。</p>
 
@@ -699,7 +699,7 @@ const App: React.FC = () => {
                           <p className="text-2xl font-black text-slate-700">{reviewedTodayCount}</p>
                         </div>
                         <div className="rounded-xl border border-green-100 bg-white p-3">
-                          <p className="text-[10px] text-slate-500 font-bold uppercase">Total</p>
+                          <p className="text-[10px] text-slate-500 font-bold uppercase">总计</p>
                           <p className="text-2xl font-black text-slate-700">{totalDeckCount}</p>
                         </div>
                       </div>
@@ -747,7 +747,7 @@ const App: React.FC = () => {
                     ) : (
                       <div className="bg-white border-2 border-dashed border-green-200 rounded-xl p-10 text-center">
                         <p className="text-slate-700 font-bold mb-2">词库已隐藏</p>
-                        <p className="text-slate-500 text-sm mb-3">点击“开始背诵”进入 Anki 风格卡片学习；需要维护词条时再打开“管理词库”。</p>
+                        <p className="text-slate-500 text-sm mb-3">点击“开始背诵”进入抽认卡学习；需要维护词条时再打开“管理词库”。</p>
                         <p className="text-[11px] text-slate-400">需背 {needReviewCount} · 已背 {reviewedTodayCount} · 总计 {totalDeckCount}</p>
                       </div>
                     )}
@@ -756,7 +756,7 @@ const App: React.FC = () => {
                   <>
                     <div className="bg-white border border-green-200 rounded-xl p-4 flex items-center justify-between">
                       <div>
-                        <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Session</p>
+                        <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">本轮练习</p>
                         <p className="text-sm font-bold text-slate-700">本轮卡片 {vocabViewItems.length} 张</p>
                         <p className="text-[11px] text-slate-400 mt-0.5">需背 {needReviewCount} · 已背 {reviewedTodayCount}</p>
                       </div>
